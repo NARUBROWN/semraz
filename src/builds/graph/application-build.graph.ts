@@ -154,56 +154,205 @@ export class ApplicationBuildGraph {
     });
 
     const graph = new StateGraph(BuildState)
-      .addNode('readDocs', this.withProgress('Reading markdown design documents', this.readDocs.bind(this), onProgress))
-      .addNode('normalizeSpec', this.withProgress('Normalizing application specification', this.normalizeSpec.bind(this), onProgress))
-      .addNode('planFiles', this.withProgress('Planning NestJS bootstrap files', this.planFiles.bind(this), onProgress))
-      .addNode('generateFiles', this.withProgress('Generating NestJS bootstrap files', this.generateFiles.bind(this), onProgress))
-      .addNode('writeFiles', this.withProgress('Writing bootstrap files to workspace', this.writeFiles.bind(this), onProgress))
-      .addNode('runBuild', this.withProgress('Installing dependencies and compiling bootstrap app', this.runBuild.bind(this), onProgress))
-      .addNode('repairFiles', this.withProgress('Repairing bootstrap build failures', this.repairFiles.bind(this), onProgress))
-      .addNode('planBuildTasks', this.withProgress('Planning entity, ORM, and CRUD tasks', this.planBuildTasks.bind(this), onProgress))
-      .addNode('selectNextTask', this.withProgress('Selecting next generation task', this.selectNextTask.bind(this), onProgress))
-      .addNode('taskPlanner', this.withProgress('Preparing selected task', this.taskPlanner.bind(this), onProgress))
-      .addNode('codeContext', this.withProgress('Reading relevant generated code context', this.codeContext.bind(this), onProgress))
-      .addNode('codeGeneration', this.withProgress('Generating task implementation files', this.codeGeneration.bind(this), onProgress))
-      .addNode('applyPatch', this.withProgress('Applying generated file changes', this.applyPatch.bind(this), onProgress))
-      .addNode('syntaxCheck', this.withProgress('Running TypeScript build check', this.syntaxCheck.bind(this), onProgress))
-      .addNode('e2eCheck', this.withProgress('Running generated app verification gate', this.e2eCheck.bind(this), onProgress))
-      .addNode('recordCompletedTask', this.withProgress('Recording completed task', this.recordCompletedTask.bind(this), onProgress))
-      .addNode('recordFailedTask', this.withProgress('Recording failed task', this.recordFailedTask.bind(this), onProgress))
-      .addNode('runFinalBuild', this.withProgress('Running final NestJS app build', this.runBuild.bind(this), onProgress))
-      .addNode('packageArtifact', this.withProgress('Collecting generated artifact summary', this.packageArtifact.bind(this), onProgress))
+      .addNode(
+        'readDocs',
+        this.withProgress(
+          'Reading markdown design documents',
+          this.readDocs.bind(this),
+          onProgress,
+        ),
+      )
+      .addNode(
+        'normalizeSpec',
+        this.withProgress(
+          'Normalizing application specification',
+          this.normalizeSpec.bind(this),
+          onProgress,
+        ),
+      )
+      .addNode(
+        'planFiles',
+        this.withProgress(
+          'Planning NestJS bootstrap files',
+          this.planFiles.bind(this),
+          onProgress,
+        ),
+      )
+      .addNode(
+        'generateFiles',
+        this.withProgress(
+          'Generating NestJS bootstrap files',
+          this.generateFiles.bind(this),
+          onProgress,
+        ),
+      )
+      .addNode(
+        'writeFiles',
+        this.withProgress(
+          'Writing bootstrap files to workspace',
+          this.writeFiles.bind(this),
+          onProgress,
+        ),
+      )
+      .addNode(
+        'runBuild',
+        this.withProgress(
+          'Installing dependencies and compiling bootstrap app',
+          this.runBuild.bind(this),
+          onProgress,
+        ),
+      )
+      .addNode(
+        'repairFiles',
+        this.withProgress(
+          'Repairing bootstrap build failures',
+          this.repairFiles.bind(this),
+          onProgress,
+        ),
+      )
+      .addNode(
+        'planBuildTasks',
+        this.withProgress(
+          'Planning entity, ORM, and CRUD tasks',
+          this.planBuildTasks.bind(this),
+          onProgress,
+        ),
+      )
+      .addNode(
+        'selectNextTask',
+        this.withProgress(
+          'Selecting next generation task',
+          this.selectNextTask.bind(this),
+          onProgress,
+        ),
+      )
+      .addNode(
+        'taskPlanner',
+        this.withProgress(
+          'Preparing selected task',
+          this.taskPlanner.bind(this),
+          onProgress,
+        ),
+      )
+      .addNode(
+        'codeContext',
+        this.withProgress(
+          'Reading relevant generated code context',
+          this.codeContext.bind(this),
+          onProgress,
+        ),
+      )
+      .addNode(
+        'codeGeneration',
+        this.withProgress(
+          'Generating task implementation files',
+          this.codeGeneration.bind(this),
+          onProgress,
+        ),
+      )
+      .addNode(
+        'applyPatch',
+        this.withProgress(
+          'Applying generated file changes',
+          this.applyPatch.bind(this),
+          onProgress,
+        ),
+      )
+      .addNode(
+        'syntaxCheck',
+        this.withProgress(
+          'Running TypeScript build check',
+          this.syntaxCheck.bind(this),
+          onProgress,
+        ),
+      )
+      .addNode(
+        'e2eCheck',
+        this.withProgress(
+          'Running generated app verification gate',
+          this.e2eCheck.bind(this),
+          onProgress,
+        ),
+      )
+      .addNode(
+        'recordCompletedTask',
+        this.withProgress(
+          'Recording completed task',
+          this.recordCompletedTask.bind(this),
+          onProgress,
+        ),
+      )
+      .addNode(
+        'recordFailedTask',
+        this.withProgress(
+          'Recording failed task',
+          this.recordFailedTask.bind(this),
+          onProgress,
+        ),
+      )
+      .addNode(
+        'runFinalBuild',
+        this.withProgress(
+          'Running final NestJS app build',
+          this.runBuild.bind(this),
+          onProgress,
+        ),
+      )
+      .addNode(
+        'packageArtifact',
+        this.withProgress(
+          'Collecting generated artifact summary',
+          this.packageArtifact.bind(this),
+          onProgress,
+        ),
+      )
       .addEdge(START, 'readDocs')
       .addEdge('readDocs', 'normalizeSpec')
       .addEdge('normalizeSpec', 'planFiles')
       .addEdge('planFiles', 'generateFiles')
       .addEdge('generateFiles', 'writeFiles')
       .addEdge('writeFiles', 'runBuild')
-      .addConditionalEdges('runBuild', (state) => this.nextAfterBootstrapBuild(state), {
-        repairFiles: 'repairFiles',
-        planBuildTasks: 'planBuildTasks',
-        packageArtifact: 'packageArtifact',
-      })
+      .addConditionalEdges(
+        'runBuild',
+        (state) => this.nextAfterBootstrapBuild(state),
+        {
+          repairFiles: 'repairFiles',
+          planBuildTasks: 'planBuildTasks',
+          packageArtifact: 'packageArtifact',
+        },
+      )
       .addEdge('repairFiles', 'runBuild')
       .addEdge('planBuildTasks', 'selectNextTask')
-      .addConditionalEdges('selectNextTask', (state) => this.nextAfterSelectTask(state), {
-        taskPlanner: 'taskPlanner',
-        runFinalBuild: 'runFinalBuild',
-      })
+      .addConditionalEdges(
+        'selectNextTask',
+        (state) => this.nextAfterSelectTask(state),
+        {
+          taskPlanner: 'taskPlanner',
+          runFinalBuild: 'runFinalBuild',
+        },
+      )
       .addEdge('taskPlanner', 'codeContext')
       .addEdge('codeContext', 'codeGeneration')
       .addEdge('codeGeneration', 'applyPatch')
       .addEdge('applyPatch', 'syntaxCheck')
-      .addConditionalEdges('syntaxCheck', (state) => this.nextAfterTaskSyntax(state), {
-        taskPlanner: 'taskPlanner',
-        e2eCheck: 'e2eCheck',
-        recordFailedTask: 'recordFailedTask',
-      })
-      .addConditionalEdges('e2eCheck', (state) => this.nextAfterTaskE2E(state), {
-        taskPlanner: 'taskPlanner',
-        recordCompletedTask: 'recordCompletedTask',
-        recordFailedTask: 'recordFailedTask',
-      })
+      .addConditionalEdges(
+        'syntaxCheck',
+        (state) => this.nextAfterTaskSyntax(state),
+        {
+          taskPlanner: 'taskPlanner',
+          e2eCheck: 'e2eCheck',
+          recordFailedTask: 'recordFailedTask',
+        },
+      )
+      .addConditionalEdges(
+        'e2eCheck',
+        (state) => this.nextAfterTaskE2E(state),
+        {
+          taskPlanner: 'taskPlanner',
+          recordCompletedTask: 'recordCompletedTask',
+          recordFailedTask: 'recordFailedTask',
+        },
+      )
       .addEdge('recordCompletedTask', 'selectNextTask')
       .addEdge('recordFailedTask', 'runFinalBuild')
       .addEdge('runFinalBuild', 'packageArtifact')
@@ -219,8 +368,15 @@ export class ApplicationBuildGraph {
       { recursionLimit: APPLICATION_GRAPH_RECURSION_LIMIT },
     );
 
-    if (!finalState.spec || !finalState.plan || !finalState.buildResult || !finalState.artifact) {
-      throw new BadRequestException('Build graph finished without required state');
+    if (
+      !finalState.spec ||
+      !finalState.plan ||
+      !finalState.buildResult ||
+      !finalState.artifact
+    ) {
+      throw new BadRequestException(
+        'Build graph finished without required state',
+      );
     }
 
     onProgress?.({
@@ -260,14 +416,18 @@ export class ApplicationBuildGraph {
         onProgress?.({
           stage: 'failed',
           message,
-          detail: { error: error instanceof Error ? error.message : 'Unknown error' },
+          detail: {
+            error: error instanceof Error ? error.message : 'Unknown error',
+          },
         });
         throw error;
       }
     };
   }
 
-  private async normalizeRequest(dto: BuildRequestDto): Promise<NormalizedBuildRequest> {
+  private async normalizeRequest(
+    dto: BuildRequestDto,
+  ): Promise<NormalizedBuildRequest> {
     const projectDir = this.workspace.resolveProjectDir(dto.projectDir);
     const outputName =
       dto.outputName ??
@@ -280,12 +440,17 @@ export class ApplicationBuildGraph {
     };
   }
 
-  private async readDocs(state: BuildStateType): Promise<Partial<BuildStateType>> {
+  private async readDocs(
+    state: BuildStateType,
+  ): Promise<Partial<BuildStateType>> {
     const docFiles = await this.findMarkdownFiles(state.request.projectDir);
     const docs: MarkdownDocument[] = [];
 
     for (const docFile of docFiles) {
-      const absolutePath = this.workspace.resolveInside(state.request.projectDir, docFile);
+      const absolutePath = this.workspace.resolveInside(
+        state.request.projectDir,
+        docFile,
+      );
       docs.push({
         path: docFile,
         content: await this.workspace.readTextFile(absolutePath),
@@ -316,7 +481,9 @@ export class ApplicationBuildGraph {
     }
   }
 
-  private async normalizeSpec(state: BuildStateType): Promise<Partial<BuildStateType>> {
+  private async normalizeSpec(
+    state: BuildStateType,
+  ): Promise<Partial<BuildStateType>> {
     const parsedSpec = this.parseMarkdownSpec(state);
     if (parsedSpec.entities.length > 0) {
       return { spec: parsedSpec };
@@ -344,8 +511,12 @@ export class ApplicationBuildGraph {
         endpoints: Array.isArray(rawSpec.endpoints) ? rawSpec.endpoints : [],
         auth: rawSpec.auth ?? {},
         database: rawSpec.database ?? {},
-        businessRules: Array.isArray(rawSpec.businessRules) ? rawSpec.businessRules : [],
-        assumptions: Array.isArray(rawSpec.assumptions) ? rawSpec.assumptions : [],
+        businessRules: Array.isArray(rawSpec.businessRules)
+          ? rawSpec.businessRules
+          : [],
+        assumptions: Array.isArray(rawSpec.assumptions)
+          ? rawSpec.assumptions
+          : [],
       },
     };
   }
@@ -354,7 +525,8 @@ export class ApplicationBuildGraph {
     const docsByPath = new Map(
       state.docs.map((doc) => [doc.path.toLowerCase(), doc.content]),
     );
-    const projectDoc = docsByPath.get('project.md') ?? state.docs[0]?.content ?? '';
+    const projectDoc =
+      docsByPath.get('project.md') ?? state.docs[0]?.content ?? '';
     const erdDoc = docsByPath.get('erd.md') ?? '';
     const endpointsDoc = docsByPath.get('endpoints.md') ?? '';
     const rulesDoc = docsByPath.get('rules.md') ?? '';
@@ -363,7 +535,8 @@ export class ApplicationBuildGraph {
     const endpointsByEntity = this.groupEndpointsByEntity(endpoints, entities);
 
     return {
-      projectName: this.firstMarkdownHeading(projectDoc) ?? state.request.outputName,
+      projectName:
+        this.firstMarkdownHeading(projectDoc) ?? state.request.outputName,
       summary: this.firstParagraphAfterHeading(projectDoc) ?? '',
       entities: entities.map((entity) => ({
         ...entity,
@@ -417,13 +590,24 @@ export class ApplicationBuildGraph {
         source: from,
         target: to,
         cardinality,
-        kind: cardinality === '1:N' ? 'one-to-many' : cardinality === 'N:1' ? 'many-to-one' : 'one-to-one',
+        kind:
+          cardinality === '1:N'
+            ? 'one-to-many'
+            : cardinality === 'N:1'
+              ? 'many-to-one'
+              : 'one-to-one',
       });
       relationMap.get(to)?.push({
         source: to,
         target: from,
-        cardinality: cardinality === '1:N' ? 'N:1' : cardinality === 'N:1' ? '1:N' : '1:1',
-        kind: cardinality === '1:N' ? 'many-to-one' : cardinality === 'N:1' ? 'one-to-many' : 'one-to-one',
+        cardinality:
+          cardinality === '1:N' ? 'N:1' : cardinality === 'N:1' ? '1:N' : '1:1',
+        kind:
+          cardinality === '1:N'
+            ? 'many-to-one'
+            : cardinality === 'N:1'
+              ? 'one-to-many'
+              : 'one-to-one',
       });
     }
 
@@ -434,30 +618,57 @@ export class ApplicationBuildGraph {
   }
 
   private parseMarkdownTable(section: string): Array<Record<string, unknown>> {
-    return section
+    const rows = section
       .split('\n')
       .map((line) => line.trim())
       .filter((line) => line.startsWith('|') && line.endsWith('|'))
-      .filter((line) => !/^\|\s*-+/.test(line))
-      .slice(1)
-      .map((line) => {
-        const [name, type, required, notes] = line
+      .map((line) =>
+        line
           .slice(1, -1)
           .split('|')
-          .map((cell) => cell.trim());
+          .map((cell) => cell.trim()),
+      );
+
+    const header = rows[0] ?? [];
+    const bodyRows = rows
+      .slice(1)
+      .filter((cells) => !cells.every((cell) => /^:?-{3,}:?$/.test(cell)));
+    const columnIndex = (names: string[], fallback: number) => {
+      const normalizedNames = names.map((name) => this.normalizeName(name));
+      const index = header.findIndex((cell) =>
+        normalizedNames.includes(this.normalizeName(cell)),
+      );
+      return index >= 0 ? index : fallback;
+    };
+    const nameIndex = columnIndex(['name', 'column', 'field'], 0);
+    const typeIndex = columnIndex(['type', 'data type'], 1);
+    const requiredIndex = columnIndex(['required', 'nn', 'not null'], 2);
+    const notesIndex = columnIndex(['notes', 'description', 'references'], 3);
+
+    return bodyRows
+      .map((cells) => {
+        const name = cells[nameIndex];
+        const type = cells[typeIndex];
+        const required = cells[requiredIndex];
+        const notes = cells[notesIndex];
         return {
           name,
           type,
-          required: required?.toLowerCase() === 'yes',
+          required: /^(yes|true|y)$/i.test(required ?? ''),
           notes,
         };
       })
-      .filter((field) => typeof field.name === 'string' && field.name.length > 0);
+      .filter(
+        (field) => typeof field.name === 'string' && field.name.length > 0,
+      );
   }
 
-  private parseEndpointRows(endpointsDoc: string): Array<Record<string, unknown>> {
+  private parseEndpointRows(
+    endpointsDoc: string,
+  ): Array<Record<string, unknown>> {
     const endpoints: Array<Record<string, unknown>> = [];
     let section = '';
+    let operationName = '';
     let currentEndpoint: Record<string, unknown> | undefined;
     let detailSection: 'requestFields' | 'responseFields' | undefined;
 
@@ -465,6 +676,14 @@ export class ApplicationBuildGraph {
       const heading = line.match(/^##\s+(.+?)\s*$/);
       if (heading) {
         section = heading[1].trim();
+        currentEndpoint = undefined;
+        detailSection = undefined;
+        continue;
+      }
+
+      const operationHeading = line.match(/^###\s+(.+?)\s*$/);
+      if (operationHeading) {
+        operationName = operationHeading[1].trim();
         currentEndpoint = undefined;
         detailSection = undefined;
         continue;
@@ -485,10 +704,13 @@ export class ApplicationBuildGraph {
         continue;
       }
 
-      const endpoint = line.match(/^-\s+`(GET|POST|PATCH|PUT|DELETE)\s+([^`]+)`(?:\s+(.*))?$/);
+      const endpoint = line.match(
+        /^-\s+`(GET|POST|PATCH|PUT|DELETE)\s+([^`]+)`(?:\s+(.*))?$/,
+      );
       if (endpoint) {
         currentEndpoint = {
           section,
+          operationName,
           method: endpoint[1],
           path: endpoint[2].trim(),
           description: endpoint[3]?.trim() ?? '',
@@ -520,14 +742,15 @@ export class ApplicationBuildGraph {
   ) {
     const byEntity = new Map<string, Array<Record<string, unknown>>>();
     const entityBySection = new Map(
-      entities.map((entity) => [
-        this.normalizeName(this.pluralizeLabel(entity.name)),
-        entity.name,
+      entities.flatMap((entity) => [
+        [this.normalizeName(entity.name), entity.name],
+        [this.normalizeName(this.pluralizeLabel(entity.name)), entity.name],
       ]),
     );
 
     for (const endpoint of endpoints) {
-      const section = typeof endpoint.section === 'string' ? endpoint.section : '';
+      const section =
+        typeof endpoint.section === 'string' ? endpoint.section : '';
       const entityName = entityBySection.get(this.normalizeName(section));
       if (!entityName) {
         continue;
@@ -562,7 +785,11 @@ export class ApplicationBuildGraph {
 
   private sectionContent(markdown: string, heading: string) {
     const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return markdown.match(new RegExp(`^##\\s+${escaped}\\s*$([\\s\\S]*?)(?=^##\\s+|\\z)`, 'm'))?.[1] ?? '';
+    return (
+      markdown.match(
+        new RegExp(`^##\\s+${escaped}\\s*$([\\s\\S]*?)(?=^##\\s+|\\z)`, 'm'),
+      )?.[1] ?? ''
+    );
   }
 
   private normalizeName(value: string) {
@@ -570,15 +797,22 @@ export class ApplicationBuildGraph {
   }
 
   private pluralizeLabel(value: string) {
+    if (/metric$/i.test(value)) {
+      return `${value}s`;
+    }
     if (value.endsWith('y')) {
       return `${value.slice(0, -1)}ies`;
     }
     return `${value}s`;
   }
 
-  private async planFiles(state: BuildStateType): Promise<Partial<BuildStateType>> {
+  private async planFiles(
+    state: BuildStateType,
+  ): Promise<Partial<BuildStateType>> {
     if (!state.spec) {
-      throw new BadRequestException('Cannot plan files without a normalized spec');
+      throw new BadRequestException(
+        'Cannot plan files without a normalized spec',
+      );
     }
 
     const adapter = this.targetAdapters.get(state.request.target);
@@ -598,18 +832,26 @@ export class ApplicationBuildGraph {
     };
   }
 
-  private async generateFiles(state: BuildStateType): Promise<Partial<BuildStateType>> {
+  private async generateFiles(
+    state: BuildStateType,
+  ): Promise<Partial<BuildStateType>> {
     if (!state.spec || !state.plan) {
-      throw new BadRequestException('Cannot generate files without spec and file plan');
+      throw new BadRequestException(
+        'Cannot generate files without spec and file plan',
+      );
     }
 
     const adapter = this.targetAdapters.get(state.request.target);
     return { generatedFiles: adapter.bootstrapFiles(state.spec) };
   }
 
-  private async planBuildTasks(state: BuildStateType): Promise<Partial<BuildStateType>> {
+  private async planBuildTasks(
+    state: BuildStateType,
+  ): Promise<Partial<BuildStateType>> {
     if (!state.spec) {
-      throw new BadRequestException('Cannot plan build tasks without a normalized spec');
+      throw new BadRequestException(
+        'Cannot plan build tasks without a normalized spec',
+      );
     }
 
     const adapter = this.targetAdapters.get(state.request.target);
@@ -618,8 +860,12 @@ export class ApplicationBuildGraph {
     };
   }
 
-  private async selectNextTask(state: BuildStateType): Promise<Partial<BuildStateType>> {
-    const completedTaskIds = new Set(state.completedTasks.map((task) => task.taskId));
+  private async selectNextTask(
+    state: BuildStateType,
+  ): Promise<Partial<BuildStateType>> {
+    const completedTaskIds = new Set(
+      state.completedTasks.map((task) => task.taskId),
+    );
     const nextTask = state.buildPlan.tasks.find(
       (task) =>
         !completedTaskIds.has(task.id) &&
@@ -654,7 +900,9 @@ export class ApplicationBuildGraph {
       currentTask: nextTask,
       hasCurrentTask: true,
       currentEntity: nextTask.targetEntity
-        ? state.spec?.entities.find((entity) => entity.name === nextTask.targetEntity)
+        ? state.spec?.entities.find(
+            (entity) => entity.name === nextTask.targetEntity,
+          )
         : undefined,
       currentContext: undefined,
       currentTaskGeneratedFiles: [],
@@ -666,9 +914,13 @@ export class ApplicationBuildGraph {
     };
   }
 
-  private async taskPlanner(state: BuildStateType): Promise<Partial<BuildStateType>> {
+  private async taskPlanner(
+    state: BuildStateType,
+  ): Promise<Partial<BuildStateType>> {
     if (!state.currentTask) {
-      throw new BadRequestException('Cannot plan task work without a selected task');
+      throw new BadRequestException(
+        'Cannot plan task work without a selected task',
+      );
     }
 
     return {
@@ -676,9 +928,13 @@ export class ApplicationBuildGraph {
     };
   }
 
-  private async codeContext(state: BuildStateType): Promise<Partial<BuildStateType>> {
+  private async codeContext(
+    state: BuildStateType,
+  ): Promise<Partial<BuildStateType>> {
     if (!state.currentTask) {
-      throw new BadRequestException('Cannot understand code without a selected task');
+      throw new BadRequestException(
+        'Cannot understand code without a selected task',
+      );
     }
 
     const adapter = this.targetAdapters.get(state.request.target);
@@ -692,7 +948,9 @@ export class ApplicationBuildGraph {
     return { currentContext };
   }
 
-  private async codeGeneration(state: BuildStateType): Promise<Partial<BuildStateType>> {
+  private async codeGeneration(
+    state: BuildStateType,
+  ): Promise<Partial<BuildStateType>> {
     if (!state.spec || !state.currentTask || !state.currentContext) {
       throw new BadRequestException(
         'Cannot generate task code without spec, selected task, and code context',
@@ -700,12 +958,13 @@ export class ApplicationBuildGraph {
     }
 
     const adapter = this.targetAdapters.get(state.request.target);
-    const currentTaskGeneratedFiles = await this.codeGenerationAgent.generateTaskFiles({
-      spec: state.spec,
-      task: state.currentTask,
-      context: state.currentContext,
-      adapter,
-    });
+    const currentTaskGeneratedFiles =
+      await this.codeGenerationAgent.generateTaskFiles({
+        spec: state.spec,
+        task: state.currentTask,
+        context: state.currentContext,
+        adapter,
+      });
 
     return {
       currentTaskGeneratedFiles,
@@ -713,17 +972,22 @@ export class ApplicationBuildGraph {
     };
   }
 
-  private async applyPatch(state: BuildStateType): Promise<Partial<BuildStateType>> {
+  private async applyPatch(
+    state: BuildStateType,
+  ): Promise<Partial<BuildStateType>> {
     const adapter = this.targetAdapters.get(state.request.target);
-    const currentTaskChangedFiles = await this.codePatchTool.applyFileReplacements(
-      state.outputDir,
-      state.currentTaskGeneratedFiles,
-      adapter,
-    );
+    const currentTaskChangedFiles =
+      await this.codePatchTool.applyFileReplacements(
+        state.outputDir,
+        state.currentTaskGeneratedFiles,
+        adapter,
+      );
     return { currentTaskChangedFiles };
   }
 
-  private async syntaxCheck(state: BuildStateType): Promise<Partial<BuildStateType>> {
+  private async syntaxCheck(
+    state: BuildStateType,
+  ): Promise<Partial<BuildStateType>> {
     const adapter = this.targetAdapters.get(state.request.target);
     const currentTaskSyntaxResult = await this.syntaxCheckAgent.check(
       state.outputDir,
@@ -737,7 +1001,9 @@ export class ApplicationBuildGraph {
     };
   }
 
-  private async e2eCheck(state: BuildStateType): Promise<Partial<BuildStateType>> {
+  private async e2eCheck(
+    state: BuildStateType,
+  ): Promise<Partial<BuildStateType>> {
     const adapter = this.targetAdapters.get(state.request.target);
     const currentTaskE2EResult = await this.e2eCheckAgent.check(
       state.outputDir,
@@ -745,7 +1011,9 @@ export class ApplicationBuildGraph {
     );
     return {
       currentTaskE2EResult,
-      currentTaskFailures: currentTaskE2EResult.success ? [] : [currentTaskE2EResult],
+      currentTaskFailures: currentTaskE2EResult.success
+        ? []
+        : [currentTaskE2EResult],
     };
   }
 
@@ -767,25 +1035,34 @@ export class ApplicationBuildGraph {
     };
   }
 
-  private async recordFailedTask(state: BuildStateType): Promise<Partial<BuildStateType>> {
+  private async recordFailedTask(
+    state: BuildStateType,
+  ): Promise<Partial<BuildStateType>> {
     return {
       completedTasks: [this.currentTaskResult(state, false)],
       hasCurrentTask: false,
     };
   }
 
-  private async writeFiles(state: BuildStateType): Promise<Partial<BuildStateType>> {
+  private async writeFiles(
+    state: BuildStateType,
+  ): Promise<Partial<BuildStateType>> {
     await fs.mkdir(state.outputDir, { recursive: true });
     await this.workspace.writeFiles(state.outputDir, state.generatedFiles);
     return {};
   }
 
-  private async runBuild(state: BuildStateType): Promise<Partial<BuildStateType>> {
+  private async runBuild(
+    state: BuildStateType,
+  ): Promise<Partial<BuildStateType>> {
     if (!state.plan) {
       throw new BadRequestException('Cannot run build without a file plan');
     }
 
-    const commands = [...state.plan.installCommands, ...state.plan.buildCommands];
+    const commands = [
+      ...state.plan.installCommands,
+      ...state.plan.buildCommands,
+    ];
 
     if (commands.length === 0) {
       return {
@@ -808,9 +1085,13 @@ export class ApplicationBuildGraph {
     };
   }
 
-  private async repairFiles(state: BuildStateType): Promise<Partial<BuildStateType>> {
+  private async repairFiles(
+    state: BuildStateType,
+  ): Promise<Partial<BuildStateType>> {
     if (!state.spec || !state.plan || !state.buildResult) {
-      throw new BadRequestException('Cannot repair without spec, plan, and build result');
+      throw new BadRequestException(
+        'Cannot repair without spec, plan, and build result',
+      );
     }
 
     const currentFiles = await this.readGeneratedFiles(state.outputDir);
@@ -844,7 +1125,9 @@ export class ApplicationBuildGraph {
     };
   }
 
-  private async packageArtifact(state: BuildStateType): Promise<Partial<BuildStateType>> {
+  private async packageArtifact(
+    state: BuildStateType,
+  ): Promise<Partial<BuildStateType>> {
     const files = await this.workspace.listFiles(state.outputDir);
     return {
       artifact: {
@@ -869,7 +1152,9 @@ export class ApplicationBuildGraph {
     return 'repairFiles';
   }
 
-  private nextAfterSelectTask(state: BuildStateType): 'taskPlanner' | 'runFinalBuild' {
+  private nextAfterSelectTask(
+    state: BuildStateType,
+  ): 'taskPlanner' | 'runFinalBuild' {
     return state.hasCurrentTask ? 'taskPlanner' : 'runFinalBuild';
   }
 
@@ -900,7 +1185,9 @@ export class ApplicationBuildGraph {
     success: boolean,
   ): TaskExecutionResult {
     if (!state.currentTask) {
-      throw new BadRequestException('Cannot record task result without a selected task');
+      throw new BadRequestException(
+        'Cannot record task result without a selected task',
+      );
     }
 
     return {
@@ -925,25 +1212,27 @@ export class ApplicationBuildGraph {
   }
 
   private cleanEntities(entities: unknown[]): EntitySpec[] {
-    return entities
-      .flatMap((entity, index): EntitySpec[] => {
-        const record =
-          typeof entity === 'object' && entity !== null
-            ? (entity as Record<string, unknown>)
-            : {};
-        const name =
-          typeof record.name === 'string' && record.name.trim()
-            ? record.name.trim()
-            : undefined;
+    return entities.flatMap((entity, index): EntitySpec[] => {
+      const record =
+        typeof entity === 'object' && entity !== null
+          ? (entity as Record<string, unknown>)
+          : {};
+      const name =
+        typeof record.name === 'string' && record.name.trim()
+          ? record.name.trim()
+          : undefined;
 
-        if (!name) {
-          return [];
-        }
+      if (!name) {
+        return [];
+      }
 
-        return [{
+      return [
+        {
           name,
           description:
-            typeof record.description === 'string' ? record.description : undefined,
+            typeof record.description === 'string'
+              ? record.description
+              : undefined,
           fields: Array.isArray(record.fields)
             ? (record.fields as Array<Record<string, unknown>>)
             : [],
@@ -954,11 +1243,14 @@ export class ApplicationBuildGraph {
             ? (record.endpoints as Array<Record<string, unknown>>)
             : [],
           businessRules: Array.isArray(record.businessRules)
-            ? record.businessRules.filter((rule): rule is string => typeof rule === 'string')
+            ? record.businessRules.filter(
+                (rule): rule is string => typeof rule === 'string',
+              )
             : [],
           source: { index, raw: record },
-        }];
-      });
+        },
+      ];
+    });
   }
 
   private cleanPlannedFiles(files: Array<{ path?: string; purpose?: string }>) {
@@ -1010,7 +1302,9 @@ export class ApplicationBuildGraph {
       .slice(-12_000);
   }
 
-  private async readGeneratedFiles(outputDir: string): Promise<GeneratedFile[]> {
+  private async readGeneratedFiles(
+    outputDir: string,
+  ): Promise<GeneratedFile[]> {
     const files = await this.workspace.listFiles(outputDir);
     const readable = files.filter(
       (file) =>
@@ -1032,11 +1326,16 @@ export class ApplicationBuildGraph {
     return result;
   }
 
-  private mergeFiles(currentFiles: GeneratedFile[], changedFiles: GeneratedFile[]) {
+  private mergeFiles(
+    currentFiles: GeneratedFile[],
+    changedFiles: GeneratedFile[],
+  ) {
     const merged = new Map(currentFiles.map((file) => [file.path, file]));
     for (const file of changedFiles) {
       merged.set(file.path, file);
     }
-    return Array.from(merged.values()).sort((a, b) => a.path.localeCompare(b.path));
+    return Array.from(merged.values()).sort((a, b) =>
+      a.path.localeCompare(b.path),
+    );
   }
 }

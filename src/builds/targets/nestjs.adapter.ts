@@ -13,6 +13,15 @@ import { TypeScriptLanguageAdapter } from '../languages/typescript-language.adap
 import { WorkspaceWriter } from '../runtime/workspace-writer';
 import { TargetAdapter } from './target-adapter';
 
+type EndpointSpec = {
+  method: string;
+  path: string;
+  operationName?: string;
+  description?: string;
+  requestFields?: Array<Record<string, unknown>>;
+  responseFields?: Array<Record<string, unknown>>;
+};
+
 @Injectable()
 export class NestJsTargetAdapter implements TargetAdapter {
   readonly target = TargetFramework.NestJS;
@@ -33,7 +42,9 @@ export class NestJsTargetAdapter implements TargetAdapter {
   ].join('\n');
 
   bootstrapFiles(spec: AppSpec): GeneratedFile[] {
-    const projectSlug = this.toKebabCase(spec.projectName || 'generated-backend');
+    const projectSlug = this.toKebabCase(
+      spec.projectName || 'generated-backend',
+    );
     const files: GeneratedFile[] = [
       {
         path: 'package.json',
@@ -57,7 +68,7 @@ export class NestJsTargetAdapter implements TargetAdapter {
               'class-transformer': '^0.5.1',
               'class-validator': '^0.14.1',
               'reflect-metadata': '^0.2.2',
-              'rxjs': '^7.8.1',
+              rxjs: '^7.8.1',
               'sql.js': '^1.12.0',
               typeorm: '^0.3.20',
             },
@@ -136,12 +147,12 @@ export class NestJsTargetAdapter implements TargetAdapter {
           '  const app = await NestFactory.create(AppModule);',
           '  app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));',
           '',
-          "  const config = new DocumentBuilder()",
+          '  const config = new DocumentBuilder()',
           `    .setTitle('${this.escapeSingleQuote(spec.projectName || 'Generated Backend')}')`,
           "    .setDescription('Generated backend API')",
           "    .setVersion('0.1.0')",
           '    .build();',
-          "  const document = SwaggerModule.createDocument(app, config);",
+          '  const document = SwaggerModule.createDocument(app, config);',
           "  SwaggerModule.setup('docs', app, document);",
           '',
           "  const port = Number(process.env.PORT ?? '3000');",
@@ -228,7 +239,9 @@ export class NestJsTargetAdapter implements TargetAdapter {
     const entityFieldTaskIds = spec.entities.map(
       (entity) => `entity-${this.toKebabCase(entity.name)}-fields`,
     );
-    const hasRelations = spec.entities.some((entity) => entity.relations.length > 0);
+    const hasRelations = spec.entities.some(
+      (entity) => entity.relations.length > 0,
+    );
     if (hasRelations) {
       tasks.push(this.entityRelationsTask(spec.entities, entityFieldTaskIds));
     }
@@ -237,7 +250,9 @@ export class NestJsTargetAdapter implements TargetAdapter {
       tasks.push(this.ormRegistrationTask(spec.entities));
     }
 
-    for (const entity of spec.entities) {
+    for (const entity of spec.entities.filter(
+      (candidate) => candidate.endpoints.length > 0,
+    )) {
       tasks.push(this.crudFeatureTask(entity, spec.entities));
     }
 
@@ -331,7 +346,9 @@ export class NestJsTargetAdapter implements TargetAdapter {
 
     if (params.task.kind === 'crud-feature') {
       const entity = this.findTaskEntity(params.spec, params.task);
-      return entity ? this.crudFeatureFiles(params.spec, entity) : [];
+      return entity
+        ? this.crudFeatureFiles(params.spec, entity, params.context)
+        : [];
     }
 
     if (params.task.kind !== 'business-workflow') {
@@ -384,17 +401,17 @@ export class NestJsTargetAdapter implements TargetAdapter {
           '  constructor(private readonly service: BusinessWorkflowsService) {}',
           '',
           "  @Post('purchase-orders/:id/receive')",
-          '  receivePurchaseOrder(@Param(\'id\') id: string, @Body() dto: ReceivePurchaseOrderDto) {',
+          "  receivePurchaseOrder(@Param('id') id: string, @Body() dto: ReceivePurchaseOrderDto) {",
           '    return this.service.receivePurchaseOrder(id, dto);',
           '  }',
           '',
           "  @Post('sales-orders/:id/confirm')",
-          '  confirmSalesOrder(@Param(\'id\') id: string, @Body() dto: ConfirmSalesOrderDto) {',
+          "  confirmSalesOrder(@Param('id') id: string, @Body() dto: ConfirmSalesOrderDto) {",
           '    return this.service.confirmSalesOrder(id, dto);',
           '  }',
           '',
           "  @Post('sales-orders/:id/ship')",
-          '  shipSalesOrder(@Param(\'id\') id: string, @Body() dto: ShipSalesOrderDto) {',
+          "  shipSalesOrder(@Param('id') id: string, @Body() dto: ShipSalesOrderDto) {",
           '    return this.service.shipSalesOrder(id, dto);',
           '  }',
           '',
@@ -438,7 +455,7 @@ export class NestJsTargetAdapter implements TargetAdapter {
           "      if (lines.length === 0) throw new BadRequestException('Purchase order has no lines');",
           '',
           '      for (const line of lines) {',
-          '        if (line.quantity <= 0) throw new BadRequestException(\'Purchase order line quantity must be positive\');',
+          "        if (line.quantity <= 0) throw new BadRequestException('Purchase order line quantity must be positive');",
           '        let balance = await manager.findOne(InventoryBalance, {',
           '          where: { itemId: line.itemId, warehouseId: line.warehouseId },',
           '        });',
@@ -482,7 +499,7 @@ export class NestJsTargetAdapter implements TargetAdapter {
           "      if (lines.length === 0) throw new BadRequestException('Sales order has no lines');",
           '',
           '      for (const line of lines) {',
-          '        if (line.quantity <= 0) throw new BadRequestException(\'Sales order line quantity must be positive\');',
+          "        if (line.quantity <= 0) throw new BadRequestException('Sales order line quantity must be positive');",
           '        const balance = await manager.findOne(InventoryBalance, {',
           '          where: { itemId: line.itemId, warehouseId: line.warehouseId },',
           '        });',
@@ -558,7 +575,7 @@ export class NestJsTargetAdapter implements TargetAdapter {
           '',
           '  async recordPayment(dto: RecordPaymentDto) {',
           '    return this.dataSource.transaction(async (manager) => {',
-          '      if (dto.amount <= 0) throw new BadRequestException(\'Payment amount must be positive\');',
+          "      if (dto.amount <= 0) throw new BadRequestException('Payment amount must be positive');",
           '      const invoice = await manager.findOne(Invoice, { where: { id: dto.invoiceId } });',
           "      if (!invoice) throw new BadRequestException('Invoice not found');",
           '      const nextPaid = invoice.amountPaid + dto.amount;',
@@ -718,8 +735,12 @@ export class NestJsTargetAdapter implements TargetAdapter {
       const slug = this.toKebabCase(entity.name);
       return `import { ${this.toPascalCase(entity.name)}Module } from './${slug}/${slug}.module';`;
     });
-    const entityNames = entities.map((entity) => this.toPascalCase(entity.name));
-    const moduleNames = featureEntities.map((entity) => `${this.toPascalCase(entity.name)}Module`);
+    const entityNames = entities.map((entity) =>
+      this.toPascalCase(entity.name),
+    );
+    const moduleNames = featureEntities.map(
+      (entity) => `${this.toPascalCase(entity.name)}Module`,
+    );
 
     return {
       path: 'src/app.module.ts',
@@ -749,15 +770,25 @@ export class NestJsTargetAdapter implements TargetAdapter {
     };
   }
 
-  private crudFeatureFiles(spec: AppSpec, entity: EntitySpec): GeneratedFile[] {
+  private crudFeatureFiles(
+    spec: AppSpec,
+    entity: EntitySpec,
+    context?: CodeContext,
+  ): GeneratedFile[] {
     const slug = this.toKebabCase(entity.name);
     const className = this.toPascalCase(entity.name);
     const variableName = this.toCamelCase(entity.name);
     const createDto = `Create${className}Dto`;
     const updateDto = `Update${className}Dto`;
+    const endpoints = this.entityEndpoints(entity);
+    const featureEntities = this.featureEntitiesForAppModule(
+      spec,
+      entity,
+      context,
+    );
 
     return [
-      this.appModuleFile(spec.entities, [entity]),
+      this.appModuleFile(spec.entities, featureEntities),
       {
         path: `src/${slug}/${slug}.module.ts`,
         content: [
@@ -778,108 +809,411 @@ export class NestJsTargetAdapter implements TargetAdapter {
       },
       {
         path: `src/${slug}/${slug}.controller.ts`,
-        content: [
-          "import { Body, Controller, Delete, Get, Param, Patch, Post } from '@nestjs/common';",
-          "import { ApiTags } from '@nestjs/swagger';",
-          `import { ${createDto} } from './dto/create-${slug}.dto';`,
-          `import { ${updateDto} } from './dto/update-${slug}.dto';`,
-          `import { ${className}Service } from './${slug}.service';`,
-          '',
-          `@ApiTags('${slug}')`,
-          `@Controller('${slug}')`,
-          `export class ${className}Controller {`,
-          `  constructor(private readonly ${variableName}Service: ${className}Service) {}`,
-          '',
-          '  @Post()',
-          `  create(@Body() dto: ${createDto}) {`,
-          `    return this.${variableName}Service.create(dto);`,
-          '  }',
-          '',
-          '  @Get()',
-          '  findAll() {',
-          `    return this.${variableName}Service.findAll();`,
-          '  }',
-          '',
-          "  @Get(':id')",
-          "  findOne(@Param('id') id: string) {",
-          `    return this.${variableName}Service.findOne(id);`,
-          '  }',
-          '',
-          "  @Patch(':id')",
-          `  update(@Param('id') id: string, @Body() dto: ${updateDto}) {`,
-          `    return this.${variableName}Service.update(id, dto);`,
-          '  }',
-          '',
-          "  @Delete(':id')",
-          "  remove(@Param('id') id: string) {",
-          `    return this.${variableName}Service.remove(id);`,
-          '  }',
-          '}',
-          '',
-        ].join('\n'),
+        content: this.controllerFileContent({
+          className,
+          createDto,
+          endpoints,
+          slug,
+          updateDto,
+          variableName,
+        }),
       },
       {
         path: `src/${slug}/${slug}.service.ts`,
-        content: [
-          "import { Injectable, NotFoundException } from '@nestjs/common';",
-          "import { InjectRepository } from '@nestjs/typeorm';",
-          "import { Repository } from 'typeorm';",
-          `import { ${createDto} } from './dto/create-${slug}.dto';`,
-          `import { ${updateDto} } from './dto/update-${slug}.dto';`,
-          `import { ${className} } from './${slug}.entity';`,
-          '',
-          '@Injectable()',
-          `export class ${className}Service {`,
-          '  constructor(',
-          `    @InjectRepository(${className})`,
-          `    private readonly repository: Repository<${className}>,`,
-          '  ) {}',
-          '',
-          `  create(dto: ${createDto}) {`,
-          '    const entity = this.repository.create(dto);',
-          '    return this.repository.save(entity);',
-          '  }',
-          '',
-          '  findAll() {',
-          '    return this.repository.find();',
-          '  }',
-          '',
-          '  async findOne(id: string) {',
-          '    const entity = await this.repository.findOne({ where: { id } as any });',
-          '    if (!entity) {',
-          `      throw new NotFoundException('${className} not found');`,
-          '    }',
-          '    return entity;',
-          '  }',
-          '',
-          `  async update(id: string, dto: ${updateDto}) {`,
-          '    const entity = await this.findOne(id);',
-          '    Object.assign(entity, dto);',
-          '    return this.repository.save(entity);',
-          '  }',
-          '',
-          '  async remove(id: string) {',
-          '    const entity = await this.findOne(id);',
-          '    await this.repository.remove(entity);',
-          '    return { deleted: true, id };',
-          '  }',
-          '}',
-          '',
-        ].join('\n'),
+        content: this.serviceFileContent({
+          className,
+          createDto,
+          endpoints,
+          slug,
+          updateDto,
+        }),
       },
-      {
-        path: `src/${slug}/dto/create-${slug}.dto.ts`,
-        content: this.dtoFileContent(createDto, entity, false),
-      },
-      {
-        path: `src/${slug}/dto/update-${slug}.dto.ts`,
-        content: this.dtoFileContent(updateDto, entity, true),
-      },
+      ...this.dtoFilesForEndpoints(entity, endpoints, createDto, updateDto),
     ];
   }
 
-  private dtoFileContent(className: string, entity: EntitySpec, optional: boolean) {
-    const fields = entity.fields.filter((field) => this.fieldName(field) !== 'id');
+  private dtoFilesForEndpoints(
+    entity: EntitySpec,
+    endpoints: EndpointSpec[],
+    createDto: string,
+    updateDto: string,
+  ): GeneratedFile[] {
+    const slug = this.toKebabCase(entity.name);
+    const dtoImports = this.endpointDtoImports(endpoints, createDto, updateDto);
+    return dtoImports.map((dtoName) => ({
+      path: `src/${slug}/dto/${this.toKebabCase(dtoName.replace(/Dto$/, ''))}.dto.ts`,
+      content: this.dtoFileContent(dtoName, entity, dtoName === updateDto),
+    }));
+  }
+
+  private controllerFileContent(params: {
+    className: string;
+    createDto: string;
+    endpoints: EndpointSpec[];
+    slug: string;
+    updateDto: string;
+    variableName: string;
+  }) {
+    const nestImports = new Set(['Controller']);
+    const methodImports = new Set<string>();
+    const lines: string[] = [];
+
+    for (const endpoint of params.endpoints) {
+      methodImports.add(this.httpDecorator(endpoint.method));
+      if (this.routeParamNames(endpoint.path).length > 0) {
+        nestImports.add('Param');
+      }
+      if (this.endpointUsesBody(endpoint)) {
+        nestImports.add('Body');
+      }
+    }
+
+    lines.push(
+      `import { ${[...nestImports, ...methodImports].sort().join(', ')} } from '@nestjs/common';`,
+      "import { ApiTags } from '@nestjs/swagger';",
+    );
+
+    const dtoImports = this.endpointDtoImports(
+      params.endpoints,
+      params.createDto,
+      params.updateDto,
+    );
+    for (const dtoImport of dtoImports) {
+      lines.push(
+        `import { ${dtoImport} } from './dto/${this.toKebabCase(dtoImport.replace(/Dto$/, ''))}.dto';`,
+      );
+    }
+
+    lines.push(
+      `import { ${params.className}Service } from './${params.slug}.service';`,
+      '',
+      `@ApiTags('${params.slug}')`,
+      '@Controller()',
+      `export class ${params.className}Controller {`,
+      `  constructor(private readonly ${params.variableName}Service: ${params.className}Service) {}`,
+    );
+
+    const methodNames = this.endpointMethodNames(params.endpoints);
+    params.endpoints.forEach((endpoint, index) => {
+      const decorator = this.httpDecorator(endpoint.method);
+      const route = this.controllerRoute(endpoint.path);
+      const routeParams = this.routeParamNames(endpoint.path);
+      const dtoName = this.endpointDtoName(
+        endpoint,
+        params.createDto,
+        params.updateDto,
+      );
+      const args = [
+        ...routeParams.map(
+          (name) => `@Param('${name}') ${this.safeIdentifier(name)}: string`,
+        ),
+        ...(dtoName ? [`@Body() dto: ${dtoName}`] : []),
+      ];
+      const serviceArgs = [
+        ...routeParams.map((name) => this.safeIdentifier(name)),
+        ...(dtoName ? ['dto'] : []),
+      ];
+
+      lines.push(
+        '',
+        `  @${decorator}('${this.escapeSingleQuote(route)}')`,
+        `  ${methodNames[index]}(${args.join(', ')}) {`,
+        `    return this.${params.variableName}Service.${methodNames[index]}(${serviceArgs.join(', ')});`,
+        '  }',
+      );
+    });
+
+    lines.push('}', '');
+    return lines.join('\n');
+  }
+
+  private serviceFileContent(params: {
+    className: string;
+    createDto: string;
+    endpoints: EndpointSpec[];
+    slug: string;
+    updateDto: string;
+  }) {
+    const needsNotFoundException = params.endpoints.some((endpoint) =>
+      this.endpointNeedsLookup(endpoint),
+    );
+    const nestImports = needsNotFoundException
+      ? 'Injectable, NotFoundException'
+      : 'Injectable';
+    const dtoImports = this.endpointDtoImports(
+      params.endpoints,
+      params.createDto,
+      params.updateDto,
+    );
+    const lines = [
+      `import { ${nestImports} } from '@nestjs/common';`,
+      "import { InjectRepository } from '@nestjs/typeorm';",
+      "import { Repository } from 'typeorm';",
+      ...dtoImports.map(
+        (dtoImport) =>
+          `import { ${dtoImport} } from './dto/${this.toKebabCase(dtoImport.replace(/Dto$/, ''))}.dto';`,
+      ),
+      `import { ${params.className} } from './${params.slug}.entity';`,
+      '',
+      '@Injectable()',
+      `export class ${params.className}Service {`,
+      '  constructor(',
+      `    @InjectRepository(${params.className})`,
+      `    private readonly repository: Repository<${params.className}>,`,
+      '  ) {}',
+    ];
+
+    const methodNames = this.endpointMethodNames(params.endpoints);
+    params.endpoints.forEach((endpoint, index) => {
+      const routeParams = this.routeParamNames(endpoint.path);
+      const dtoName = this.endpointDtoName(
+        endpoint,
+        params.createDto,
+        params.updateDto,
+      );
+      const args = [
+        ...routeParams.map((name) => `${this.safeIdentifier(name)}: string`),
+        ...(dtoName ? [`dto: ${dtoName}`] : []),
+      ];
+
+      lines.push('', `  async ${methodNames[index]}(${args.join(', ')}) {`);
+      lines.push(
+        ...this.serviceMethodBody(endpoint, routeParams, params.className),
+      );
+      lines.push('  }');
+    });
+
+    lines.push('}', '');
+    return lines.join('\n');
+  }
+
+  private serviceMethodBody(
+    endpoint: EndpointSpec,
+    routeParams: string[],
+    className: string,
+  ) {
+    const method = endpoint.method.toUpperCase();
+    const idParam = routeParams.find(
+      (name) => this.normalizeName(name) === 'id',
+    );
+    const whereObject = this.whereObjectLiteral(routeParams);
+
+    if (method === 'GET' && routeParams.length === 0) {
+      return ['    return this.repository.find();'];
+    }
+
+    if (method === 'GET') {
+      return [
+        `    const entity = await this.repository.findOne({ where: ${whereObject} as any });`,
+        '    if (!entity) {',
+        `      throw new NotFoundException('${className} not found');`,
+        '    }',
+        '    return entity;',
+      ];
+    }
+
+    if (method === 'DELETE') {
+      return [
+        `    const entity = await this.repository.findOne({ where: ${whereObject} as any });`,
+        '    if (!entity) {',
+        `      throw new NotFoundException('${className} not found');`,
+        '    }',
+        '    await this.repository.remove(entity);',
+        `    return { deleted: true${idParam ? `, id: ${this.safeIdentifier(idParam)}` : ''} };`,
+      ];
+    }
+
+    if (method === 'PUT' || method === 'PATCH') {
+      return [
+        `    const entity = await this.repository.findOne({ where: ${whereObject} as any });`,
+        '    if (!entity) {',
+        `      throw new NotFoundException('${className} not found');`,
+        '    }',
+        '    Object.assign(entity, dto);',
+        '    return this.repository.save(entity);',
+      ];
+    }
+
+    return [
+      '    const entity = this.repository.create({',
+      '      ...dto,',
+      ...routeParams.map((name) => `      ${this.safeIdentifier(name)},`),
+      '    } as any);',
+      '    return this.repository.save(entity);',
+    ];
+  }
+
+  private entityEndpoints(entity: EntitySpec): EndpointSpec[] {
+    return entity.endpoints.flatMap((endpoint): EndpointSpec[] => {
+      const method =
+        typeof endpoint.method === 'string'
+          ? endpoint.method.toUpperCase()
+          : '';
+      const path =
+        typeof endpoint.path === 'string' ? endpoint.path.trim() : '';
+      if (!/^(GET|POST|PUT|PATCH|DELETE)$/.test(method) || !path) {
+        return [];
+      }
+      return [
+        {
+          method,
+          path,
+          operationName:
+            typeof endpoint.operationName === 'string'
+              ? endpoint.operationName
+              : undefined,
+          description:
+            typeof endpoint.description === 'string'
+              ? endpoint.description
+              : undefined,
+          requestFields: Array.isArray(endpoint.requestFields)
+            ? (endpoint.requestFields as Array<Record<string, unknown>>)
+            : [],
+          responseFields: Array.isArray(endpoint.responseFields)
+            ? (endpoint.responseFields as Array<Record<string, unknown>>)
+            : [],
+        },
+      ];
+    });
+  }
+
+  private featureEntitiesForAppModule(
+    spec: AppSpec,
+    currentEntity: EntitySpec,
+    context?: CodeContext,
+  ) {
+    const existingFeatureModules = new Set(
+      context?.relevantFiles
+        .filter((file) => /^src\/[^/]+\/[^/]+\.module\.ts$/.test(file))
+        .map((file) => file.split('/')[1]) ?? [],
+    );
+    existingFeatureModules.add(this.toKebabCase(currentEntity.name));
+    return spec.entities.filter(
+      (entity) =>
+        entity.endpoints.length > 0 &&
+        existingFeatureModules.has(this.toKebabCase(entity.name)),
+    );
+  }
+
+  private endpointDtoName(
+    endpoint: EndpointSpec,
+    createDto: string,
+    updateDto: string,
+  ) {
+    if (!this.endpointUsesBody(endpoint)) {
+      return undefined;
+    }
+    return endpoint.method.toUpperCase() === 'POST' ? createDto : updateDto;
+  }
+
+  private endpointDtoImports(
+    endpoints: EndpointSpec[],
+    createDto: string,
+    updateDto: string,
+  ) {
+    return Array.from(
+      new Set(
+        endpoints
+          .map((endpoint) =>
+            this.endpointDtoName(endpoint, createDto, updateDto),
+          )
+          .filter((dtoName): dtoName is string => Boolean(dtoName)),
+      ),
+    );
+  }
+
+  private endpointNeedsLookup(endpoint: EndpointSpec) {
+    const method = endpoint.method.toUpperCase();
+    return (
+      ['GET', 'PUT', 'PATCH', 'DELETE'].includes(method) &&
+      this.routeParamNames(endpoint.path).length > 0
+    );
+  }
+
+  private endpointMethodNames(endpoints: EndpointSpec[]) {
+    const used = new Map<string, number>();
+    return endpoints.map((endpoint) => {
+      const baseName = this.endpointMethodName(endpoint);
+      const count = used.get(baseName) ?? 0;
+      used.set(baseName, count + 1);
+      return count === 0 ? baseName : `${baseName}${count + 1}`;
+    });
+  }
+
+  private endpointMethodName(endpoint: EndpointSpec) {
+    const source =
+      endpoint.operationName?.trim() ||
+      endpoint.description?.trim() ||
+      `${endpoint.method.toLowerCase()} ${endpoint.path}`;
+    const words = source.match(/[A-Za-z0-9]+/g) ?? [];
+    const normalizedWords =
+      words.length > 0
+        ? words
+        : [
+            endpoint.method.toLowerCase(),
+            ...endpoint.path.split('/').filter(Boolean),
+          ];
+    const [first, ...rest] = normalizedWords;
+    const methodName = [
+      first.toLowerCase(),
+      ...rest.map((word) => this.capitalizeIdentifierPart(word)),
+    ].join('');
+
+    if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(methodName)) {
+      return methodName;
+    }
+
+    return `handle${this.capitalizeIdentifierPart(this.httpDecorator(endpoint.method))}`;
+  }
+
+  private capitalizeIdentifierPart(value: string) {
+    const cleaned = value.replace(/[^A-Za-z0-9_$]/g, '');
+    if (!cleaned) {
+      return '';
+    }
+    return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+  }
+
+  private endpointUsesBody(endpoint: EndpointSpec) {
+    return ['POST', 'PUT', 'PATCH'].includes(endpoint.method.toUpperCase());
+  }
+
+  private httpDecorator(method: string) {
+    const normalized = method.toUpperCase();
+    return normalized.charAt(0) + normalized.slice(1).toLowerCase();
+  }
+
+  private controllerRoute(path: string) {
+    return path.trim().replace(/^\/+/, '');
+  }
+
+  private routeParamNames(path: string) {
+    return Array.from(
+      path.matchAll(/:([A-Za-z_][A-Za-z0-9_]*)/g),
+      (match) => match[1],
+    );
+  }
+
+  private whereObjectLiteral(routeParams: string[]) {
+    if (routeParams.length === 0) {
+      return '{}';
+    }
+    return `{ ${routeParams.map((name) => `${name}: ${this.safeIdentifier(name)}`).join(', ')} }`;
+  }
+
+  private safeIdentifier(value: string) {
+    const identifier = value.replace(/[^A-Za-z0-9_$]/g, '_');
+    return /^[A-Za-z_$]/.test(identifier) ? identifier : `param_${identifier}`;
+  }
+
+  private dtoFileContent(
+    className: string,
+    entity: EntitySpec,
+    optional: boolean,
+  ) {
+    const fields = entity.fields.filter(
+      (field) => this.fieldName(field) !== 'id',
+    );
     const decoratorImports = new Set<string>();
     const lines = [
       "import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';",
@@ -892,7 +1226,9 @@ export class NestJsTargetAdapter implements TargetAdapter {
     }
 
     if (decoratorImports.size > 0) {
-      lines.push(`import { ${Array.from(decoratorImports).sort().join(', ')} } from 'class-validator';`);
+      lines.push(
+        `import { ${Array.from(decoratorImports).sort().join(', ')} } from 'class-validator';`,
+      );
     }
 
     lines.push('');
@@ -917,7 +1253,10 @@ export class NestJsTargetAdapter implements TargetAdapter {
     return lines.join('\n');
   }
 
-  entityDesignPrompt(params: { spec: AppSpec; existingFiles: GeneratedFile[] }): string {
+  entityDesignPrompt(params: {
+    spec: AppSpec;
+    existingFiles: GeneratedFile[];
+  }): string {
     return [
       'Design all TypeORM entity classes for this NestJS backend before feature implementation starts.',
       'Return JSON shape: {"files":[{"path":"relative/path","content":"complete file content"}]}.',
@@ -1032,10 +1371,11 @@ export class NestJsTargetAdapter implements TargetAdapter {
       title: 'Register TypeORM infrastructure',
       description:
         'Configure TypeOrmModule.forRoot for local SQL.js execution and register all generated entities.',
-      dependsOn:
-        hasRelations
-          ? ['entity-relations']
-          : entities.map((entity) => `entity-${this.toKebabCase(entity.name)}-fields`),
+      dependsOn: hasRelations
+        ? ['entity-relations']
+        : entities.map(
+            (entity) => `entity-${this.toKebabCase(entity.name)}-fields`,
+          ),
       allowedFiles: ['src/app.module.ts', 'package.json', 'tsconfig.json'],
       doneCriteria: [
         'TypeOrmModule.forRoot is configured with type sqljs and synchronize true',
@@ -1046,14 +1386,16 @@ export class NestJsTargetAdapter implements TargetAdapter {
     };
   }
 
-  private crudFeatureTask(entity: EntitySpec, entities: EntitySpec[]): BuildTask {
+  private crudFeatureTask(
+    entity: EntitySpec,
+    entities: EntitySpec[],
+  ): BuildTask {
     const slug = this.toKebabCase(entity.name);
     return {
       id: `feature-${slug}-crud`,
       kind: 'crud-feature',
       title: `Implement ${entity.name} CRUD feature`,
-      description:
-        `Implement the ${entity.name} NestJS module, controller, service, DTOs, and repository usage.`,
+      description: `Implement the ${entity.name} NestJS module, controller, service, DTOs, and repository usage.`,
       targetEntity: entity.name,
       dependsOn: [
         'orm-registration',
@@ -1079,7 +1421,10 @@ export class NestJsTargetAdapter implements TargetAdapter {
     };
   }
 
-  private businessWorkflowTask(entities: EntitySpec[], hasRelations: boolean): BuildTask {
+  private businessWorkflowTask(
+    entities: EntitySpec[],
+    hasRelations: boolean,
+  ): BuildTask {
     const featureTaskIds = entities.map(
       (entity) => `feature-${this.toKebabCase(entity.name)}-crud`,
     );
@@ -1188,7 +1533,10 @@ export class NestJsTargetAdapter implements TargetAdapter {
 
     return {
       ...params.file,
-      content: this.mergeNestAppModule(params.existingContent, params.file.content),
+      content: this.mergeNestAppModule(
+        params.existingContent,
+        params.file.content,
+      ),
     };
   }
 
@@ -1201,17 +1549,22 @@ export class NestJsTargetAdapter implements TargetAdapter {
       return [];
     }
 
-    const entityFiles = (await params.workspace.listFiles(params.rootDir)).filter(
-      (file) => file.endsWith('.entity.ts') && file.startsWith('src/'),
-    );
+    const entityFiles = (
+      await params.workspace.listFiles(params.rootDir)
+    ).filter((file) => file.endsWith('.entity.ts') && file.startsWith('src/'));
     const entities = await Promise.all(
       entityFiles.map(async (filePath) => {
-        const absolutePath = params.workspace.resolveInside(params.rootDir, filePath);
+        const absolutePath = params.workspace.resolveInside(
+          params.rootDir,
+          filePath,
+        );
         const content = await params.workspace.readTextFile(absolutePath);
         return this.parseEntityFile(filePath, content);
       }),
     );
-    const byClassName = new Map(entities.map((entity) => [entity.className, entity]));
+    const byClassName = new Map(
+      entities.map((entity) => [entity.className, entity]),
+    );
     const changed = new Map<string, string>();
 
     for (const entity of entities) {
@@ -1243,7 +1596,10 @@ export class NestJsTargetAdapter implements TargetAdapter {
         }
 
         if (relation.decorator === 'ManyToOne') {
-          target.content = this.ensureTypeOrmDecoratorImport(target.content, 'OneToMany');
+          target.content = this.ensureTypeOrmDecoratorImport(
+            target.content,
+            'OneToMany',
+          );
           target.content = this.ensureEntityImport(
             target.content,
             entity.className,
@@ -1264,22 +1620,41 @@ export class NestJsTargetAdapter implements TargetAdapter {
       }
     }
 
-    const changedFiles = Array.from(changed, ([path, content]) => ({ path, content }));
+    const changedFiles = Array.from(changed, ([path, content]) => ({
+      path,
+      content,
+    }));
     await params.workspace.writeFiles(params.rootDir, changedFiles);
     return changedFiles.map((file) => file.path);
   }
 
   installCommands(): CommandSpec[] {
-    return [{ command: 'npm', args: ['install'], description: 'Install Node dependencies' }];
+    return [
+      {
+        command: 'npm',
+        args: ['install'],
+        description: 'Install Node dependencies',
+      },
+    ];
   }
 
   buildCommands(): CommandSpec[] {
-    return [{ command: 'npm', args: ['run', 'build'], description: 'Compile NestJS application' }];
+    return [
+      {
+        command: 'npm',
+        args: ['run', 'build'],
+        description: 'Compile NestJS application',
+      },
+    ];
   }
 
   syntaxCheckCommands(): CommandSpec[] {
     return [
-      { command: 'npm', args: ['run', 'build'], description: 'Compile NestJS application' },
+      {
+        command: 'npm',
+        args: ['run', 'build'],
+        description: 'Compile NestJS application',
+      },
     ];
   }
 
@@ -1288,7 +1663,8 @@ export class NestJsTargetAdapter implements TargetAdapter {
       {
         command: 'npm',
         args: ['run', 'build'],
-        description: 'Fallback E2E gate until generated smoke tests are available',
+        description:
+          'Fallback E2E gate until generated smoke tests are available',
       },
     ];
   }
@@ -1322,12 +1698,16 @@ export class NestJsTargetAdapter implements TargetAdapter {
   }
 
   private fieldType(field: Record<string, unknown>) {
-    return typeof field.type === 'string' ? field.type.trim().toLowerCase() : 'string';
+    return typeof field.type === 'string'
+      ? field.type.trim().toLowerCase()
+      : 'string';
   }
 
   private tsType(field: Record<string, unknown>) {
     const type = this.fieldType(field);
-    if (['int', 'integer', 'number', 'float', 'decimal', 'double'].includes(type)) {
+    if (
+      ['int', 'integer', 'number', 'float', 'decimal', 'double'].includes(type)
+    ) {
       return 'number';
     }
     if (['bool', 'boolean'].includes(type)) {
@@ -1358,7 +1738,10 @@ export class NestJsTargetAdapter implements TargetAdapter {
     return `{ type: 'varchar'${nullable} }`;
   }
 
-  private validatorDecorators(field: Record<string, unknown>, optional: boolean) {
+  private validatorDecorators(
+    field: Record<string, unknown>,
+    optional: boolean,
+  ) {
     const decorators: string[] = [];
     const type = this.fieldType(field);
 
@@ -1387,7 +1770,10 @@ export class NestJsTargetAdapter implements TargetAdapter {
     return value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
   }
 
-  private mergeNestAppModule(existingContent: string, nextContent: string): string {
+  private mergeNestAppModule(
+    existingContent: string,
+    nextContent: string,
+  ): string {
     const importDeclarations = Array.from(
       new Set([
         ...this.extractImportDeclarations(existingContent),
@@ -1402,11 +1788,23 @@ export class NestJsTargetAdapter implements TargetAdapter {
     const moduleImports = this.dedupeModuleImports(
       Array.from(
         new Set([
-          ...this.extractModuleImports(existingContent),
-          ...this.extractModuleImports(nextContent),
+          ...this.extractModuleArray(existingContent, 'imports'),
+          ...this.extractModuleArray(nextContent, 'imports'),
         ]),
       ).filter(Boolean),
     );
+    const controllers = Array.from(
+      new Set([
+        ...this.extractModuleArray(existingContent, 'controllers'),
+        ...this.extractModuleArray(nextContent, 'controllers'),
+      ]),
+    ).filter(Boolean);
+    const providers = Array.from(
+      new Set([
+        ...this.extractModuleArray(existingContent, 'providers'),
+        ...this.extractModuleArray(nextContent, 'providers'),
+      ]),
+    ).filter(Boolean);
 
     if (moduleImports.length === 0) {
       return nextContent;
@@ -1419,6 +1817,20 @@ export class NestJsTargetAdapter implements TargetAdapter {
       '  imports: [',
       ...moduleImports.map((moduleImport) => `    ${moduleImport},`),
       '  ],',
+      ...(controllers.length > 0
+        ? [
+            '  controllers: [',
+            ...controllers.map((controller) => `    ${controller},`),
+            '  ],',
+          ]
+        : []),
+      ...(providers.length > 0
+        ? [
+            '  providers: [',
+            ...providers.map((provider) => `    ${provider},`),
+            '  ],',
+          ]
+        : []),
       '})',
       'export class AppModule {}',
       '',
@@ -1432,18 +1844,21 @@ export class NestJsTargetAdapter implements TargetAdapter {
       .filter((line) => line.startsWith('import ') && line.endsWith(';'));
   }
 
-  private extractModuleImports(content: string): string[] {
+  private extractModuleArray(content: string, propertyName: string): string[] {
     const moduleIndex = content.indexOf('@Module');
     if (moduleIndex === -1) {
       return [];
     }
 
-    const importsIndex = content.indexOf('imports', moduleIndex);
-    if (importsIndex === -1) {
+    const propertyMatch = new RegExp(`\\b${propertyName}\\s*:`).exec(
+      content.slice(moduleIndex),
+    );
+    if (!propertyMatch) {
       return [];
     }
 
-    const bracketStart = content.indexOf('[', importsIndex);
+    const propertyIndex = moduleIndex + propertyMatch.index;
+    const bracketStart = content.indexOf('[', propertyIndex);
     if (bracketStart === -1) {
       return [];
     }
@@ -1453,7 +1868,9 @@ export class NestJsTargetAdapter implements TargetAdapter {
       return [];
     }
 
-    return this.splitTopLevelCommaList(content.slice(bracketStart + 1, bracketEnd));
+    return this.splitTopLevelCommaList(
+      content.slice(bracketStart + 1, bracketEnd),
+    );
   }
 
   private findMatchingBracket(content: string, bracketStart: number): number {
@@ -1522,7 +1939,9 @@ export class NestJsTargetAdapter implements TargetAdapter {
 
   private dedupeModuleImports(moduleImports: string[]): string[] {
     const typeOrmForRoot = moduleImports
-      .filter((moduleImport) => moduleImport.startsWith('TypeOrmModule.forRoot('))
+      .filter((moduleImport) =>
+        moduleImport.startsWith('TypeOrmModule.forRoot('),
+      )
       .sort((left, right) => right.length - left.length)[0];
     const withoutDuplicateTypeOrmRoot = moduleImports.filter(
       (moduleImport) => !moduleImport.startsWith('TypeOrmModule.forRoot('),
@@ -1591,7 +2010,10 @@ export class NestJsTargetAdapter implements TargetAdapter {
       return `import { ${decoratorName} } from 'typeorm';\n${content}`;
     }
 
-    const imports = match[1].split(',').map((item) => item.trim()).filter(Boolean);
+    const imports = match[1]
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
     if (imports.includes(decoratorName)) {
       return content;
     }
@@ -1628,13 +2050,16 @@ export class NestJsTargetAdapter implements TargetAdapter {
     const commonPrefixLength = fromDir.findIndex(
       (part, index) => part !== toWithoutFile[index],
     );
-    const sharedLength = commonPrefixLength === -1
-      ? Math.min(fromDir.length, toWithoutFile.length)
-      : commonPrefixLength;
+    const sharedLength =
+      commonPrefixLength === -1
+        ? Math.min(fromDir.length, toWithoutFile.length)
+        : commonPrefixLength;
     const upSegments = fromDir.slice(sharedLength).map(() => '..');
     const downSegments = toParts.slice(sharedLength);
     const relativePath = [...upSegments, ...downSegments].join('/');
-    const importPath = relativePath.startsWith('.') ? relativePath : `./${relativePath}`;
+    const importPath = relativePath.startsWith('.')
+      ? relativePath
+      : `./${relativePath}`;
 
     return `import { ${className} } from '${importPath}';\n${content}`;
   }
@@ -1651,7 +2076,7 @@ export class NestJsTargetAdapter implements TargetAdapter {
   private normalizePackageJson(content: string) {
     const packageJson = this.parseJsonObject(content);
     packageJson.scripts = {
-      ...(this.asRecord(packageJson.scripts)),
+      ...this.asRecord(packageJson.scripts),
       build: 'nest build',
       start: 'node dist/main.js',
     };

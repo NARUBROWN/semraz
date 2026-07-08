@@ -39,6 +39,6 @@ import { TargetAdapterRegistry } from './targets/target-adapter.registry';
     NestJsTargetAdapter,
     TargetAdapterRegistry,
   ],
-  exports: [BuildService],
+  exports: [BuildService, OpenAiJsonClient],
 })
 export class BuildsModule {}

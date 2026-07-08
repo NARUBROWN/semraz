@@ -1,0 +1,122 @@
+/**
+ * Semraz design tokens.
+ *
+ * Every value here was lifted verbatim from frontend/src/App.css — this file
+ * names what the app was already using, it does not introduce new design
+ * decisions. The palette is a warm bone background with a teal brand and a
+ * terracotta accent.
+ */
+
+:root {
+  /* ---- Brand ------------------------------------------------------------ */
+  --ds-teal: #205bb8; /* brand primary: brand mark, wizard button, selection */
+  --ds-teal-strong: #1b4a94; /* active tab border */
+  --ds-teal-soft: #eef4fb; /* teal tinted surface */
+  --ds-teal-soft-alt: #e4edf9; /* teal tinted surface, chips */
+  --ds-teal-border: #cddef2;
+  --ds-teal-border-muted: #9dbce8;
+  --ds-teal-chip-bg: #f5f9fe;
+  --ds-teal-chip-border: #d5e4f6;
+
+  --ds-terracotta: #f5490f; /* accent: primary action, relation lines */
+  --ds-terracotta-disabled: #f6b8a3;
+
+  /* ---- Surfaces --------------------------------------------------------- */
+  --ds-bg-page: #fbfaf6; /* bone page background */
+  --ds-surface-raised: #ffffff; /* off-white cards, inputs */
+  --ds-surface: #ffffff;
+  --ds-surface-sunken: #efece4; /* neutral pill, divider */
+  --ds-surface-grid: #e8e5da; /* canvas grid lines */
+
+  --ds-page-wash: var(--ds-bg-page);
+
+  /* ---- Ink -------------------------------------------------------------- */
+  --ds-ink: #16150f; /* headings, input text */
+  --ds-ink-strong: #26241a; /* labels, body on tinted surfaces */
+  --ds-ink-muted: #524e3f;
+  --ds-ink-muted-alt: #6f6a59; /* body copy */
+  --ds-ink-subtle: #6f6a59; /* eyebrows, uppercase labels */
+  --ds-ink-faint: #948e7c;
+
+  /* ---- Borders ---------------------------------------------------------- */
+  --ds-border: #e8e5da; /* default hairline */
+  --ds-border-input: #d8d4c5;
+  --ds-border-tab: #d8d4c5;
+  --ds-border-divider: #efece4;
+
+  /* ---- Status ----------------------------------------------------------- */
+  --ds-danger: #b21f15;
+  --ds-danger-soft: #fdecea;
+  --ds-danger-chip-bg: #fef4f2;
+  --ds-danger-chip-border: #f4c4bf;
+
+  --ds-success: #167048;
+  --ds-success-soft: #e9f6ef;
+
+  /* ---- Terminal --------------------------------------------------------- */
+  --ds-term-bg: #16150f; /* also the spec panel background */
+  --ds-term-fg: #f4f2ea;
+  --ds-term-border: #3a3729;
+  --ds-term-dim: #d8d4c5;
+  --ds-term-prompt: #7ea8dd;
+  --ds-term-success: #d9f2e5;
+  --ds-term-success-prompt: #4fd08a;
+  --ds-term-error: #ffd3c7;
+  --ds-term-error-prompt: #ff8f6f;
+
+  /* ---- Spacing ---------------------------------------------------------- */
+  --ds-space-2xs: 6px;
+  --ds-space-xs: 8px;
+  --ds-space-sm: 10px;
+  --ds-space-md: 12px;
+  --ds-space-lg: 16px;
+  --ds-space-xl: 18px;
+  --ds-space-2xl: 24px;
+  --ds-space-3xl: 28px;
+  --ds-space-4xl: 36px;
+
+  /* ---- Radii ------------------------------------------------------------ */
+  --ds-radius-sm: 5px;
+  --ds-radius-input: 6px;
+  --ds-radius-mark: 7px;
+  --ds-radius: 8px;
+  --ds-radius-pill: 999px;
+  --ds-radius-circle: 50%;
+
+  /* ---- Typography ------------------------------------------------------- */
+  --ds-font-sans: 'Hanken Grotesk', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --ds-font-display: 'Bricolage Grotesque', 'Hanken Grotesk', sans-serif;
+  --ds-font-mono: 'JetBrains Mono', 'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace;
+
+  --ds-text-2xs: 10px;
+  --ds-text-xs: 11px;
+  --ds-text-sm: 12px;
+  --ds-text-code: 13px;
+  --ds-text-base: 14px;
+  --ds-text-lg: 16px;
+  --ds-text-stat: 32px;
+  --ds-text-title: clamp(28px, 4vw, 44px);
+  --ds-text-display: clamp(32px, 5vw, 58px);
+
+  --ds-weight-regular: 500;
+  --ds-weight-medium: 700;
+  --ds-weight-bold: 800;
+  --ds-weight-black: 900;
+
+  /* ---- Control heights -------------------------------------------------- */
+  --ds-control-xs: 28px;
+  --ds-control-sm: 30px;
+  --ds-control-md: 34px;
+  --ds-control-lg: 38px;
+  --ds-control-xl: 42px;
+
+  /* ---- Elevation -------------------------------------------------------- */
+  --ds-shadow-node: 0 16px 40px rgba(22, 21, 15, 0.12);
+  --ds-shadow-panel: 0 24px 80px rgba(22, 21, 15, 0.1);
+  --ds-shadow-float:
+    0 20px 50px rgba(22, 21, 15, 0.16),
+    0 4px 14px rgba(22, 21, 15, 0.08);
+
+  /* Selection marker: the 4px inset bar that marks a chosen card. */
+  --ds-selected-bar: inset 4px 0 0 var(--ds-teal);
+}

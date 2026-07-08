@@ -1,0 +1,89 @@
+/**
+ * A field is a label stacked over a control, with an optional error beneath.
+ * Every text input, select, and textarea in the system is this shape.
+ */
+
+.ds-field {
+  display: grid;
+  gap: var(--ds-space-xs);
+  min-width: 0;
+}
+
+.ds-field__label {
+  color: var(--ds-ink-strong);
+  font-size: var(--ds-text-base);
+  font-weight: var(--ds-weight-bold);
+}
+
+.ds-field__control,
+.ds-field input,
+.ds-field select,
+.ds-field textarea {
+  width: 100%;
+  min-width: 0;
+  min-height: var(--ds-control-xl);
+  border: 1px solid var(--ds-border-input);
+  border-radius: var(--ds-radius-input);
+  background: var(--ds-surface-raised);
+  color: var(--ds-ink);
+  font: inherit;
+  padding: 0 var(--ds-space-md);
+}
+
+.ds-field textarea {
+  min-height: 118px;
+  padding: var(--ds-space-md);
+  resize: vertical;
+}
+
+/* Span every column of the parent grid. */
+.ds-field--wide {
+  grid-column: 1 / -1;
+}
+
+/* Denser controls, for tables and inline editors. */
+.ds-field--compact .ds-field__label {
+  font-size: var(--ds-text-sm);
+  font-weight: var(--ds-weight-black);
+}
+
+.ds-field--compact .ds-field__control,
+.ds-field--compact input,
+.ds-field--compact select {
+  min-height: var(--ds-control-lg);
+  padding: 0 var(--ds-space-sm);
+}
+
+.ds-field--compact textarea {
+  min-height: 74px;
+  padding: var(--ds-space-sm);
+}
+
+/* The error line. Also usable standalone under a form. */
+.ds-field__error {
+  margin: 0;
+  color: var(--ds-danger);
+  font-size: var(--ds-text-base);
+}
+
+.ds-field--invalid .ds-field__control,
+.ds-field--invalid input,
+.ds-field--invalid select,
+.ds-field--invalid textarea {
+  border-color: var(--ds-danger);
+}
+
+/* ---- Layout ------------------------------------------------------------- */
+
+/* The standard two-column form grid: a wide column and a 180px column. */
+.ds-field-grid {
+  display: grid;
+  grid-template-columns: 1fr 180px;
+  gap: 14px;
+}
+
+@media (max-width: 900px) {
+  .ds-field-grid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,0 +1,55 @@
+/**
+ * The uppercase kicker that sits above a title. Used on auth panels, cards,
+ * and picker groups to name the category of what follows.
+ */
+.ds-eyebrow {
+  margin: 0 0 var(--ds-space-xs);
+  color: var(--ds-ink-subtle);
+  font-size: var(--ds-text-sm);
+  font-weight: var(--ds-weight-medium);
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+/* Heavier, tighter. For eyebrows inside dense editors and pickers. */
+.ds-eyebrow--strong {
+  margin: 0;
+  font-weight: var(--ds-weight-black);
+}
+
+/**
+ * A section title with its actions pushed to the far edge.
+ * Stacks vertically under 900px.
+ */
+.ds-section-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--ds-space-lg);
+  align-items: center;
+  margin-bottom: var(--ds-space-lg);
+}
+
+.ds-section-heading__title {
+  margin: 0;
+  color: var(--ds-ink);
+}
+
+.ds-section-heading__actions {
+  display: flex;
+  gap: var(--ds-space-sm);
+  align-items: center;
+}
+
+@media (max-width: 900px) {
+  .ds-section-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
+/* Body copy. Muted, lighter than the surrounding text. */
+.ds-muted-copy {
+  margin: 0;
+  color: var(--ds-ink-muted-alt);
+  font-weight: var(--ds-weight-regular);
+}

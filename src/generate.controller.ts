@@ -201,18 +201,27 @@ function buildProjectMarkdown(request: GenerateWorkspaceRequest) {
 
   return `# ${project?.name ?? 'Untitled Semraz Project'}
 
+## Product Brief
+This file is the source-of-truth project summary prepared from the Semraz Project and Planning steps.
+
 ## Description
 ${project?.description ?? ''}
 
 ## Target
 - Framework: ${project?.framework ?? 'NestJS'}
 - Database: ${project?.database ?? 'PostgreSQL'}
+- Language: TypeScript
 
 ## Purpose
 ${project?.planning?.purpose ?? ''}
 
-## Constraints
+## Code Conventions and Constraints
 ${project?.planning?.constraints ?? ''}
+
+## Generation Boundary
+- Use PROJECT.md, ERD.md, endpoints.md, and rules.md as the reviewed design input.
+- Do not invent entities or APIs that contradict the reviewed Semraz steps.
+- Generated code must compile before tests or workflow implementation are considered complete.
 `;
 }
 
@@ -224,19 +233,24 @@ function buildErdMarkdown(request: GenerateWorkspaceRequest) {
     .map((entity) => {
       const fields = entity.fields ?? [];
       const fieldRows = fields
-        .map(
-          (field) =>
-            `| ${field.name} | ${field.type} | ${
-              field.isPrimaryKey || field.isNotNull ? 'yes' : 'no'
-            } | ${field.isForeignKey ? `FK -> ${field.referencesEntityId ?? 'unknown'}` : '-'} |`,
+        .map((field) =>
+          [
+            `| ${field.name}`,
+            field.type,
+            field.isPrimaryKey ? 'yes' : 'no',
+            field.isNotNull ? 'yes' : 'no',
+            field.isForeignKey ? 'yes' : 'no',
+            field.referencesEntityId ?? '-',
+            '|',
+          ].join(' | '),
         )
         .join('\n');
 
       return `## Entity: ${entity.name}
 
-| Name | Type | Required | Notes |
-| --- | --- | --- | --- |
-${fieldRows || '| _none_ | string | no | - |'}
+| Column | Type | PK | NN | FK | References |
+| --- | --- | --- | --- | --- | --- |
+${fieldRows || '| _none_ | string | no | no | no | - |'}
 `;
     })
     .join('\n');
@@ -248,7 +262,7 @@ ${fieldRows || '| _none_ | string | no | - |'}
       const target =
         entities.find((entity) => entity.id === relation.targetId)?.name ?? relation.targetId;
 
-      return `- ${source} ${relation.sourceCardinality}:${relation.targetCardinality} ${target}`;
+      return `- ${source} ${relation.sourceCardinality}:${relation.targetCardinality} ${target} (${relation.direction})`;
     })
     .join('\n');
 
@@ -307,6 +321,8 @@ ${endpointRows || '- No endpoints selected yet.'}
 
   return `# Endpoints
 
+Each endpoint is generated from the Semraz Operations step. Keep method, path, request fields, response fields, and description aligned with this file.
+
 ${sections}
 `;
 }
@@ -343,6 +359,7 @@ function buildRulesMarkdown(request: GenerateWorkspaceRequest) {
 - Framework must be NestJS.
 - Database target is ${project?.database ?? 'PostgreSQL'} in the Semraz spec; generated local verification may use SQL.js.
 - Generated code must compile before it is treated as ready.
+- Respect the Project, Planning, ERD, and Operations markdown files as the ordered design source.
 ${project?.planning?.constraints ?? ''}
 ${enabledOperations}
 `;
@@ -366,7 +383,7 @@ function parseEntities(markdown: string) {
 
   for (const section of sections) {
     const [rawName, ...rest] = section.split('\n');
-    const name = rawName.trim();
+    const name = rawName.trim().replace(/^Entity:\s*/i, '');
 
     if (!name || name === 'Relations') {
       continue;
@@ -380,7 +397,7 @@ function parseEntities(markdown: string) {
         type: row[1],
         isPrimaryKey: row[2] === 'yes',
         isNotNull: row[3] === 'yes',
-        isForeignKey: row[4]?.startsWith('yes') ?? false,
+        isForeignKey: row[4] === 'yes',
       }));
 
     entities.push({ name, fields });

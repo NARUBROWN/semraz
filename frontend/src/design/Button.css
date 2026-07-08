@@ -1,0 +1,79 @@
+.ds-button {
+  display: inline-flex;
+  gap: var(--ds-space-xs);
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--ds-radius-input);
+  font: inherit;
+  font-weight: var(--ds-weight-bold);
+  cursor: pointer;
+  padding: 0 var(--ds-space-lg);
+}
+
+.ds-button:disabled {
+  cursor: progress;
+  opacity: 0.68;
+}
+
+/* ---- Variants ----------------------------------------------------------- */
+
+/* The terracotta accent. The one call to action on a screen. */
+.ds-button--primary {
+  background: var(--ds-terracotta);
+  color: var(--ds-surface);
+}
+
+.ds-button--primary:disabled {
+  background: var(--ds-terracotta-disabled);
+  box-shadow: none;
+}
+
+/* Neutral outline. Cancel, back, secondary actions. */
+.ds-button--ghost {
+  border: 1px solid var(--ds-border-input);
+  background: var(--ds-surface);
+  color: var(--ds-ink-strong);
+}
+
+/* Solid teal. Advances a wizard step. */
+.ds-button--wizard {
+  border: 1px solid var(--ds-teal);
+  background: var(--ds-teal);
+  color: var(--ds-surface);
+}
+
+/* Destructive: delete an entity, a field, a relation. */
+.ds-button--danger {
+  border: 1px solid var(--ds-danger-chip-border);
+  background: var(--ds-danger-chip-bg);
+  color: var(--ds-danger);
+}
+
+/* ---- Sizes -------------------------------------------------------------- */
+
+.ds-button--sm {
+  min-height: var(--ds-control-sm);
+  padding: 0 var(--ds-space-sm);
+  font-size: var(--ds-text-sm);
+}
+
+.ds-button--md {
+  min-height: var(--ds-control-lg);
+  padding: 0 14px;
+}
+
+.ds-button--lg {
+  min-height: var(--ds-control-xl);
+}
+
+/* ---- Modifiers ---------------------------------------------------------- */
+
+.ds-button--block {
+  width: 100%;
+}
+
+/* Lifted terracotta, used where the button floats over a canvas. */
+.ds-button--raised.ds-button--primary {
+  box-shadow: 0 8px 18px rgba(245, 73, 15, 0.28);
+}

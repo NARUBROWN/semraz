@@ -1,0 +1,20 @@
+/** The Semraz mark: a teal rounded square holding one or two glyphs. */
+.ds-brand-mark {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: var(--ds-radius-mark);
+  background: var(--ds-teal);
+  color: var(--ds-surface);
+  font-weight: var(--ds-weight-bold);
+  user-select: none;
+}
+
+.ds-brand-mark--sm {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--ds-radius-sm);
+  font-size: var(--ds-text-sm);
+}

@@ -1,0 +1,72 @@
+.ds-panel {
+  border: 1px solid var(--ds-border);
+  border-radius: var(--ds-radius);
+  background: var(--ds-surface);
+  padding: var(--ds-space-xl);
+}
+
+/* The workhorse. A stacking panel: children flow down with an even gutter. */
+.ds-panel--flow {
+  display: grid;
+  align-content: start;
+  gap: var(--ds-space-lg);
+}
+
+/* Translucent bone. Wraps a whole section of the workspace. */
+.ds-panel--surface {
+  background: rgba(255, 255, 255, 0.88);
+}
+
+/* Same, slightly more opaque. Wraps a multi-step flow. */
+.ds-panel--shell {
+  background: rgba(255, 255, 255, 0.9);
+}
+
+/* The centered login/onboarding panel. */
+.ds-panel--auth {
+  width: min(100%, 520px);
+  background: var(--ds-surface-raised);
+  padding: var(--ds-space-4xl);
+  box-shadow: var(--ds-shadow-panel);
+}
+
+/* Dark. Renders code, specs, JSON. Give it a heading and a <pre>. */
+.ds-panel--spec {
+  background: var(--ds-term-bg);
+  color: var(--ds-term-fg);
+  padding: 0;
+  overflow: hidden;
+}
+
+.ds-panel--spec > .ds-panel__title {
+  margin: 0;
+  border-bottom: 1px solid var(--ds-term-border);
+  padding: 14px var(--ds-space-lg);
+}
+
+.ds-panel--spec pre {
+  margin: 0;
+  overflow: auto;
+  padding: var(--ds-space-lg);
+  font-size: var(--ds-text-code);
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+/* Bone with a printed grid. The ERD canvas sits on this. */
+.ds-panel--canvas {
+  position: relative;
+  overflow: hidden;
+  background-color: var(--ds-surface-raised);
+  background-image:
+    linear-gradient(var(--ds-surface-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--ds-surface-grid) 1px, transparent 1px);
+  background-size:
+    var(--ds-canvas-grid-size, 28px) var(--ds-canvas-grid-size, 28px),
+    var(--ds-canvas-grid-size, 28px) var(--ds-canvas-grid-size, 28px);
+}
+
+.ds-panel__title {
+  margin: 0;
+  color: var(--ds-ink);
+}

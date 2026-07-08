@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthController } from './auth.controller';
+import { AiWizardController } from './ai-wizard.controller';
 import { BuildsModule } from './builds/builds.module';
 import { GenerateController } from './generate.controller';
 import { ProjectsController } from './projects.controller';
@@ -15,7 +16,7 @@ import { ProjectsController } from './projects.controller';
     }),
     BuildsModule,
   ],
-  controllers: [AppController, AuthController, GenerateController, ProjectsController],
+  controllers: [AppController, AuthController, AiWizardController, GenerateController, ProjectsController],
   providers: [AppService],
 })
 export class AppModule {}

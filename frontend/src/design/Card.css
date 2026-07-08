@@ -1,0 +1,77 @@
+/**
+ * A card is a selectable surface. The selection marker is always the same:
+ * the border turns teal and a 4px teal bar is inset on the leading edge.
+ */
+
+.ds-card {
+  display: grid;
+  width: 100%;
+  gap: var(--ds-space-xs);
+  border: 1px solid var(--ds-border);
+  border-radius: var(--ds-radius);
+  background: var(--ds-surface-raised);
+  color: var(--ds-ink);
+  padding: 14px;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.ds-card p {
+  margin: 0;
+  color: var(--ds-ink-muted-alt);
+  font-weight: var(--ds-weight-regular);
+}
+
+/* ---- Variants ----------------------------------------------------------- */
+
+/* Pick-one-of-many: a framework, a target, an option. */
+.ds-card--framework {
+  gap: var(--ds-space-xs);
+}
+
+/* A row in the project list. Slightly roomier, white. */
+.ds-card--project {
+  gap: 9px;
+  background: var(--ds-surface);
+  padding: var(--ds-space-lg);
+}
+
+/*
+ * A settled decision, rendered as already-selected and not clickable.
+ * Teal throughout — this is a summary, not a choice.
+ */
+.ds-card--locked {
+  gap: var(--ds-space-md);
+  border-color: var(--ds-teal);
+  background: var(--ds-teal-soft);
+  padding: var(--ds-space-xl);
+  box-shadow: var(--ds-selected-bar);
+  cursor: default;
+}
+
+.ds-card--locked p {
+  color: var(--ds-ink-strong);
+}
+
+/* ---- States ------------------------------------------------------------- */
+
+.ds-card--selected {
+  border-color: var(--ds-teal);
+  box-shadow: var(--ds-selected-bar);
+}
+
+.ds-card--disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+/* ---- Slots -------------------------------------------------------------- */
+
+/* Small uppercase label above the card's title. */
+.ds-card__eyebrow {
+  color: var(--ds-ink-subtle);
+  font-size: var(--ds-text-sm);
+  font-weight: var(--ds-weight-bold);
+  text-transform: uppercase;
+}

@@ -1,0 +1,51 @@
+/**
+ * A pill is a small, fully-rounded status badge. Never interactive.
+ * Tone carries the meaning; shape and weight never change.
+ */
+
+.ds-pill {
+  display: inline-block;
+  width: fit-content;
+  border-radius: var(--ds-radius-pill);
+  padding: 5px 9px;
+  font-size: var(--ds-text-sm);
+  font-weight: var(--ds-weight-bold);
+  font-style: normal;
+}
+
+.ds-pill--uppercase {
+  text-transform: uppercase;
+}
+
+/* ---- Tones -------------------------------------------------------------- */
+
+/* Default. A neutral fact: a count, a tag, a framework name. */
+.ds-pill--neutral {
+  background: var(--ds-surface-sunken);
+  color: var(--ds-ink-strong);
+}
+
+/* In progress, or a hint. Teal on tinted teal. */
+.ds-pill--info {
+  background: var(--ds-teal-soft);
+  color: var(--ds-teal);
+}
+
+.ds-pill--success {
+  background: var(--ds-success-soft);
+  color: var(--ds-success);
+}
+
+.ds-pill--danger {
+  background: var(--ds-danger-soft);
+  color: var(--ds-danger);
+}
+
+/*
+ * White on teal. Use only when the pill sits ON a tinted teal surface
+ * (a locked card, an autosave indicator) where `info` would disappear.
+ */
+.ds-pill--contrast {
+  background: var(--ds-surface);
+  color: var(--ds-teal);
+}

@@ -1,0 +1,129 @@
+/**
+ * A live build log. Lines type themselves in character by character; the last
+ * running line breathes and carries a blinking cursor.
+ */
+
+.ds-terminal {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-height: 360px;
+  max-height: 520px;
+  overflow: auto;
+  border-radius: var(--ds-radius);
+  background: var(--ds-term-bg);
+  color: var(--ds-term-fg);
+  padding: var(--ds-space-lg);
+  font-family: var(--ds-font-mono);
+  font-size: var(--ds-text-code);
+  line-height: 1.45;
+}
+
+.ds-terminal__line {
+  display: flex;
+  min-height: 19px;
+  gap: var(--ds-space-sm);
+  align-items: baseline;
+  color: var(--ds-term-dim);
+}
+
+.ds-terminal__line--success {
+  color: var(--ds-term-success);
+}
+
+.ds-terminal__line--error {
+  color: var(--ds-term-error);
+}
+
+.ds-terminal__line--running {
+  color: var(--ds-term-fg);
+}
+
+/* The last running line pulses while work is in flight. */
+.ds-terminal__line--breathing {
+  animation: ds-terminal-breathe 2.2s ease-in-out infinite;
+}
+
+/* The fixed-width gutter: `$`, `ok`, `err`, `run`. */
+.ds-terminal__prompt {
+  flex: 0 0 34px;
+  color: var(--ds-term-prompt);
+  font-size: var(--ds-text-xs);
+  font-weight: var(--ds-weight-bold);
+  text-transform: uppercase;
+}
+
+.ds-terminal__line--success .ds-terminal__prompt {
+  color: var(--ds-term-success-prompt);
+}
+
+.ds-terminal__line--error .ds-terminal__prompt {
+  color: var(--ds-term-error-prompt);
+}
+
+/*
+ * Types itself in. The `--characters` custom property must be set to the
+ * text's length — the step count and the final width both derive from it.
+ */
+.ds-terminal__text {
+  display: inline-block;
+  overflow: hidden;
+  max-width: 100%;
+  white-space: nowrap;
+  animation: ds-terminal-type 0.7s steps(var(--characters)) both;
+}
+
+.ds-terminal__cursor {
+  display: inline-block;
+  width: 8px;
+  height: 1.1em;
+  margin-left: 2px;
+  background: var(--ds-term-fg);
+  transform: translateY(2px);
+  animation: ds-terminal-cursor-blink 1.2s ease-in-out infinite;
+}
+
+@keyframes ds-terminal-type {
+  from {
+    max-width: 0;
+  }
+
+  to {
+    max-width: min(100%, calc(var(--characters) * 1ch));
+  }
+}
+
+@keyframes ds-terminal-cursor-blink {
+  0%,
+  45% {
+    opacity: 1;
+  }
+
+  46%,
+  100% {
+    opacity: 0.15;
+  }
+}
+
+@keyframes ds-terminal-breathe {
+  0%,
+  100% {
+    opacity: 0.62;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-terminal__text,
+  .ds-terminal__cursor,
+  .ds-terminal__line--breathing {
+    animation: none;
+  }
+
+  .ds-terminal__text {
+    max-width: 100%;
+  }
+}

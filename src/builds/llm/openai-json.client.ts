@@ -9,7 +9,7 @@ export class OpenAiJsonClient {
 
   constructor(config: ConfigService) {
     const apiKey = config.get<string>('OPENAI_API_KEY');
-    this.client = apiKey ? new OpenAI({ apiKey }) : undefined;
+    this.client = apiKey ? new OpenAI({ apiKey, timeout: 60000 }) : undefined;
     this.model = config.get<string>('OPENAI_MODEL') ?? 'gpt-4o-mini';
   }
 
