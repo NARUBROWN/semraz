@@ -529,9 +529,33 @@ describe('NestJsTargetAdapter', () => {
     expect(files.get('src/app.module.ts')).toContain('DATABASE_URL');
     expect(files.get('src/app.module.ts')).toContain("type: 'postgres'");
     expect(files.get('src/app.module.ts')).toContain("type: 'sqljs'");
-    expect(JSON.parse(files.get('package.json')!).dependencies).toHaveProperty(
-      'pg',
+    expect(files.get('src/app.module.ts')).toContain('migrationsRun: true');
+    expect(files.get('src/database/data-source.ts')).toContain(
+      "type: 'postgres'",
     );
+    const packageJson = JSON.parse(files.get('package.json')!) as {
+      scripts: Record<string, string>;
+      dependencies: Record<string, string>;
+    };
+    expect(packageJson.scripts).toHaveProperty('migration:run');
+    expect(packageJson.dependencies).toHaveProperty('pg');
+  });
+
+  it('plans a required initial migration before CRUD features', () => {
+    const plan = adapter.planBuildTasks(spec);
+    const migration = plan.tasks.find(
+      (task) => task.kind === 'database-migration',
+    );
+    const feature = plan.tasks.find((task) => task.kind === 'crud-feature');
+
+    expect(migration).toEqual(
+      expect.objectContaining({
+        id: 'database-migration',
+        dependsOn: ['orm-registration'],
+        allowedFiles: ['src/migrations/1700000000000-InitialSchema.ts'],
+      }),
+    );
+    expect(feature?.dependsOn).toContain('database-migration');
   });
 
   it('bootstraps strict validation and Swagger DTO metadata generation', () => {

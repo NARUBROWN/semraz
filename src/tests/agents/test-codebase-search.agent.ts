@@ -247,17 +247,22 @@ export class TestCodebaseSearchAgent {
   }
 
   private failedSpecPaths(failures: BuildRunResult[]): string[] {
-    return Array.from(
-      new Set(
-        failures.flatMap((failure) =>
-          Array.from(
-            failure.errorSummary?.matchAll(/^FAIL\s+(.+\.spec\.ts)\s*$/gm) ??
-              [],
-            (match) => match[1].trim(),
-          ),
+    const paths = failures.flatMap((failure) => {
+      const summary = failure.errorSummary ?? '';
+      return [
+        ...Array.from(
+          summary.matchAll(/^FAIL\s+(.+\.spec\.ts)\s*$/gm),
+          (match) => match[1].trim(),
         ),
-      ),
-    );
+        ...Array.from(
+          summary.matchAll(
+            /^(src\/.+\.spec\.ts)\(\d+,\d+\):\s+error\s+TS\d+/gm,
+          ),
+          (match) => match[1].trim(),
+        ),
+      ];
+    });
+    return Array.from(new Set(paths));
   }
 
   private async findContractViolations(

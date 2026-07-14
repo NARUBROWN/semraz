@@ -47,7 +47,7 @@ export class NestJsTargetAdapter implements TargetAdapter {
     'Do not implement business entities yet unless required for the app to compile.',
     'Set up validation pipe and a simple health endpoint or root endpoint.',
     'Set up a complete OpenAPI contract and reject unknown request properties.',
-    'Include scripts for build, start, and E2E verification.',
+    'Include scripts for build, start, typecheck, and TypeORM migration run/revert.',
   ].join('\n');
 
   bootstrapFiles(spec: AppSpec): GeneratedFile[] {
@@ -68,6 +68,10 @@ export class NestJsTargetAdapter implements TargetAdapter {
               start: 'node dist/main.js',
               'start:dev': 'nest start --watch',
               typecheck: 'tsc --noEmit',
+              'migration:run':
+                'npm run build && typeorm -d dist/database/data-source.js migration:run',
+              'migration:revert':
+                'npm run build && typeorm -d dist/database/data-source.js migration:revert',
             },
             dependencies: {
               '@nestjs/common': '^10.4.15',
@@ -196,6 +200,8 @@ export class NestJsTargetAdapter implements TargetAdapter {
           `      type: '${productionDatabase}' as const,`,
           '      url: process.env.DATABASE_URL,',
           '      synchronize: false,',
+          "      migrations: [__dirname + '/migrations/*{.ts,.js}'],",
+          '      migrationsRun: true,',
           '      autoLoadEntities: true,',
           '      retryAttempts: 1,',
           '    }',
@@ -215,6 +221,49 @@ export class NestJsTargetAdapter implements TargetAdapter {
           '  providers: [],',
           '})',
           'export class AppModule {}',
+          '',
+        ].join('\n'),
+      },
+      {
+        path: 'src/database/data-source.ts',
+        content: [
+          "import 'reflect-metadata';",
+          "import { DataSource } from 'typeorm';",
+          '',
+          "if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required to run migrations');",
+          '',
+          'export default new DataSource({',
+          `  type: '${productionDatabase}' as const,`,
+          '  url: process.env.DATABASE_URL,',
+          "  entities: [__dirname + '/../**/*.entity{.ts,.js}'],",
+          "  migrations: [__dirname + '/../migrations/*{.ts,.js}'],",
+          '  synchronize: false,',
+          '});',
+          '',
+        ].join('\n'),
+      },
+      {
+        path: 'src/database/persistence-conflict.ts',
+        content: [
+          "import { ConflictException } from '@nestjs/common';",
+          '',
+          'export async function withPersistenceConflict<T>(',
+          '  operation: () => Promise<T>,',
+          "  message = 'The operation conflicts with related or existing data.',",
+          '): Promise<T> {',
+          '  try {',
+          '    return await operation();',
+          '  } catch (error) {',
+          '    const candidate = error as { code?: string | number; errno?: string | number; message?: string; driverError?: { code?: string | number; errno?: string | number; message?: string } };',
+          '    const driver = candidate.driverError ?? candidate;',
+          '    const code = String(driver.code ?? driver.errno ?? candidate.code ?? candidate.errno ?? "");',
+          '    const detail = String(driver.message ?? candidate.message ?? "");',
+          "    if (['23503', '23505', '1451', '1452', 'SQLITE_CONSTRAINT', 'ER_ROW_IS_REFERENCED_2', 'ER_NO_REFERENCED_ROW_2'].includes(code) || /foreign key|unique constraint|duplicate entry/i.test(detail)) {",
+          '      throw new ConflictException(message);',
+          '    }',
+          '    throw error;',
+          '  }',
+          '}',
           '',
         ].join('\n'),
       },
@@ -301,12 +350,13 @@ export class NestJsTargetAdapter implements TargetAdapter {
 
     if (spec.entities.length > 0) {
       tasks.push(this.ormRegistrationTask(spec, relationTaskIds));
+      tasks.push(this.databaseMigrationTask(spec));
     }
 
     for (const entity of spec.entities.filter(
       (candidate) => candidate.endpoints.length > 0,
     )) {
-      tasks.push(this.crudFeatureTask(entity, spec.entities));
+      tasks.push(this.crudFeatureTask(entity));
     }
 
     for (const entity of spec.entities) {
@@ -349,6 +399,8 @@ export class NestJsTargetAdapter implements TargetAdapter {
         return task.allowedFiles;
       case 'orm-registration':
         return ['src/app.module.ts'];
+      case 'database-migration':
+        return ['src/migrations/1700000000000-InitialSchema.ts'];
       case 'crud-feature':
         return task.allowedFiles;
       case 'endpoint-workflow':
@@ -487,7 +539,7 @@ export class NestJsTargetAdapter implements TargetAdapter {
             (candidate) => candidate.name === param,
           );
           return (
-            String(field?.type ?? '')
+            (typeof field?.type === 'string' ? field.type : '')
               .toLowerCase()
               .includes('uuid') ||
             param === 'id' ||
@@ -517,6 +569,68 @@ export class NestJsTargetAdapter implements TargetAdapter {
             `${file.path} must declare an explicit onDelete policy for every owning relation`,
           );
         }
+      }
+    }
+
+    if (params.task.kind === 'database-migration') {
+      const migration =
+        byPath.get('src/migrations/1700000000000-InitialSchema.ts') ?? '';
+      if (
+        !/implements\s+MigrationInterface/.test(migration) ||
+        !/export\s+class\s+InitialSchema1700000000000\b/.test(migration) ||
+        !/\bup\s*\(\s*queryRunner\s*:\s*QueryRunner/.test(migration) ||
+        !/\bdown\s*\(\s*queryRunner\s*:\s*QueryRunner/.test(migration)
+      ) {
+        problems.push(
+          'Initial migration must export InitialSchema1700000000000 and implement executable MigrationInterface up/down methods',
+        );
+      }
+      const normalizedMigration = this.normalizeName(migration);
+      for (const migrationEntity of params.spec.entities) {
+        const entityToken = this.normalizeName(migrationEntity.name);
+        if (!normalizedMigration.includes(entityToken)) {
+          problems.push(
+            `Initial migration is missing table for ${migrationEntity.name}`,
+          );
+        }
+        for (const field of migrationEntity.fields) {
+          const fieldName =
+            typeof field.name === 'string' ? field.name.trim() : '';
+          if (!fieldName) continue;
+          const columnToken = this.normalizeName(fieldName);
+          if (!normalizedMigration.includes(columnToken)) {
+            problems.push(
+              `Initial migration is missing ${migrationEntity.name}.${fieldName}`,
+            );
+          }
+        }
+        if (
+          migrationEntity.relations.length > 0 &&
+          !/TableForeignKey|foreignKeys\s*:/.test(migration)
+        ) {
+          problems.push(
+            `Initial migration is missing foreign keys for ${migrationEntity.name}`,
+          );
+        }
+      }
+    }
+
+    if (
+      entity &&
+      (params.task.kind === 'crud-feature' ||
+        params.task.kind === 'endpoint-workflow')
+    ) {
+      const slug = this.toKebabCase(entity.name);
+      const service = byPath.get(`src/${slug}/${slug}.service.ts`) ?? '';
+      if (
+        /\b(?:repository|\w+Repository)\.(?:remove|delete)\s*\(/.test(
+          service,
+        ) &&
+        !/withPersistenceConflict|ConflictException/.test(service)
+      ) {
+        problems.push(
+          `${entity.name} delete operations must convert foreign-key conflicts to ConflictException`,
+        );
       }
     }
 
@@ -551,9 +665,13 @@ export class NestJsTargetAdapter implements TargetAdapter {
 
       if (entity.endpoints.length > 0) {
         const controllerPath = `src/${slug}/${slug}.controller.ts`;
+        const servicePath = `src/${slug}/${slug}.service.ts`;
         const controller = params.files.find(
           (file) => file.path === controllerPath,
         );
+        const service = params.files.find(
+          (file) => file.path === servicePath,
+        )?.content;
         if (!controller) {
           problems.push(`${controllerPath}: endpoint controller is missing`);
         } else {
@@ -561,6 +679,17 @@ export class NestJsTargetAdapter implements TargetAdapter {
             ...this.validateEndpointSkeleton(entity, controller.content).map(
               (problem) => `${controllerPath}: ${problem}`,
             ),
+          );
+        }
+        if (
+          service &&
+          /\b(?:repository|\w+Repository)\.(?:remove|delete)\s*\(/.test(
+            service,
+          ) &&
+          !/withPersistenceConflict|ConflictException/.test(service)
+        ) {
+          problems.push(
+            `${servicePath}: delete operations must map foreign-key conflicts to HTTP 409`,
           );
         }
         problems.push(...this.validateDtoSkeleton(entity, params.files));
@@ -581,6 +710,36 @@ export class NestJsTargetAdapter implements TargetAdapter {
     ) {
       problems.push(
         `src/app.module.ts: must provide ${productionDatabase} DATABASE_URL config with SQL.js smoke fallback`,
+      );
+    }
+    if (
+      !appModule.includes('migrationsRun: true') ||
+      !appModule.includes('/migrations/*{.ts,.js}')
+    ) {
+      problems.push(
+        'src/app.module.ts: production database must run generated TypeORM migrations',
+      );
+    }
+    const initialMigration = params.files.find(
+      (file) => file.path === 'src/migrations/1700000000000-InitialSchema.ts',
+    )?.content;
+    if (
+      !initialMigration ||
+      !/implements\s+MigrationInterface/.test(initialMigration)
+    ) {
+      problems.push(
+        'src/migrations/1700000000000-InitialSchema.ts: generated initial migration is required',
+      );
+    } else {
+      problems.push(
+        ...this.validateTaskFiles({
+          spec: params.spec,
+          task: this.databaseMigrationTask(params.spec),
+          files: params.files,
+        }).map(
+          (problem) =>
+            `src/migrations/1700000000000-InitialSchema.ts: ${problem}`,
+        ),
       );
     }
     if (!main.includes('forbidNonWhitelisted: true')) {
@@ -671,6 +830,7 @@ export class NestJsTargetAdapter implements TargetAdapter {
       'Enforce invariants twice when appropriate: class-validator for request feedback and TypeORM unique/check/foreign-key constraints for persisted integrity.',
       'Before saving a relation foreign key, query the related repository and throw NotFoundException when it does not exist; never expose a raw foreign-key violation as HTTP 500.',
       'Convert expected uniqueness or relation conflicts into ConflictException or BadRequestException with a stable message instead of returning a generic 500.',
+      'For repository.remove/delete/save operations that can hit foreign-key or unique constraints, wrap the operation with withPersistenceConflict from src/database/persistence-conflict.ts (or provide an equivalent driver-aware catch) so PostgreSQL 23503/23505, MySQL 1451/1452, and SQLite FOREIGN KEY constraint errors become ConflictException rather than HTTP 500.',
       'Declare an explicit onDelete policy for every TypeORM relation, choosing RESTRICT by default unless the specification explicitly requires CASCADE or SET NULL.',
       'Keep code buildable with npm run build.',
       'Never import a type, enum, or class from another generated file unless the code context explicitly shows that file exports it.',
@@ -685,6 +845,8 @@ export class NestJsTargetAdapter implements TargetAdapter {
       'When currentTask.kind is "entity-relations", return EVERY file listed in currentTask.allowedFiles in one response, each with complete final content; never return only a subset of the entity files.',
       'When currentTask.kind is "entity-relations", every property referenced by an inverse-side lambda (e.g. x => x.user) must be declared in the returned content of that related entity file with the matching @ManyToOne/@OneToMany decorator.',
       'When a previous TypeScript error says Property "x" does not exist on type "Y", either change the inverse-side lambda to an existing property or add property "x" to class Y if Y is in currentTask.allowedFiles.',
+      'When currentTask.kind is "database-migration", return exactly src/migrations/1700000000000-InitialSchema.ts, export class InitialSchema1700000000000 (the timestamp suffix is required by TypeORM), and implement a portable MigrationInterface using QueryRunner/Table/TableForeignKey APIs for the configured production database.',
+      'When currentTask.kind is "database-migration", include every normalized entity table and preserve scalar types, nullability, primary keys, unique/check constraints, indexes, and relation foreign keys; create foreign keys after all tables and reverse the order in down().',
       'When currentTask.kind is "business-workflow", implement only workflows that are explicitly supported by the normalized spec and existing entity files.',
       'When currentTask.kind is "business-workflow", create or update only the dedicated business-workflows module/controller/service/DTO files and AppModule registration.',
       'When currentTask.kind is "business-workflow", do not edit or replace existing entity CRUD services/controllers; preserve all generated CRUD features.',
@@ -852,10 +1014,31 @@ export class NestJsTargetAdapter implements TargetAdapter {
     };
   }
 
-  private crudFeatureTask(
-    entity: EntitySpec,
-    entities: EntitySpec[],
-  ): BuildTask {
+  private databaseMigrationTask(spec: AppSpec): BuildTask {
+    const productionDatabase = this.productionDatabaseType(spec);
+    return {
+      id: 'database-migration',
+      kind: 'database-migration',
+      title: 'Create initial database migration',
+      description: [
+        `Create a complete initial TypeORM migration for ${productionDatabase}.`,
+        'Use MigrationInterface and QueryRunner. Create every entity table, column, primary key, unique/check constraint, index, and foreign key represented by the normalized spec.',
+        'The up method must create tables before their foreign keys. The down method must drop foreign keys and tables in reverse dependency order.',
+        'Do not use synchronize, do not leave placeholders, and do not modify entity files.',
+      ].join(' '),
+      dependsOn: ['orm-registration'],
+      allowedFiles: ['src/migrations/1700000000000-InitialSchema.ts'],
+      doneCriteria: [
+        'InitialSchema1700000000000 implements MigrationInterface',
+        'Every normalized entity has a production table',
+        'Primary keys, required fields, constraints, and relations are represented',
+        'Both up and down are executable and reversible',
+        'Configured build command passes',
+      ],
+    };
+  }
+
+  private crudFeatureTask(entity: EntitySpec): BuildTask {
     const slug = this.toKebabCase(entity.name);
     return {
       id: `feature-${slug}-crud`,
@@ -867,7 +1050,7 @@ export class NestJsTargetAdapter implements TargetAdapter {
         JSON.stringify(this.conventionalEndpointSkeleton(entity), null, 2),
       ].join('\n'),
       targetEntity: entity.name,
-      dependsOn: ['orm-registration'],
+      dependsOn: ['database-migration'],
       allowedFiles: [
         `src/${slug}/${slug}.module.ts`,
         `src/${slug}/${slug}.controller.ts`,
@@ -1271,9 +1454,11 @@ export class NestJsTargetAdapter implements TargetAdapter {
       entities:
         task.kind === 'orm-registration'
           ? spec.entities.map((entity) => ({ name: entity.name }))
-          : entities.length > 0
-            ? entities
-            : spec.entities,
+          : task.kind === 'database-migration'
+            ? spec.entities
+            : entities.length > 0
+              ? entities
+              : spec.entities,
       endpoints: task.targetEntity
         ? spec.endpoints.filter((endpoint) =>
             entities.some((entity) => entity.endpoints.includes(endpoint)),
@@ -2120,6 +2305,12 @@ export class NestJsTargetAdapter implements TargetAdapter {
       ...this.asRecord(packageJson.scripts),
       build: 'nest build',
       start: 'node dist/main.js',
+      'start:dev': 'nest start --watch',
+      typecheck: 'tsc --noEmit',
+      'migration:run':
+        'npm run build && typeorm -d dist/database/data-source.js migration:run',
+      'migration:revert':
+        'npm run build && typeorm -d dist/database/data-source.js migration:revert',
     };
     packageJson.dependencies = {
       ...this.asRecord(packageJson.dependencies),

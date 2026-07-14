@@ -135,6 +135,7 @@ export type BuildTaskKind =
   | 'entity-fields'
   | 'entity-relations'
   | 'orm-registration'
+  | 'database-migration'
   | 'crud-feature'
   | 'endpoint-workflow'
   | 'business-workflow'

@@ -1,6 +1,7 @@
 import { NestJsTestAdapter } from './nestjs-test.adapter';
 import { GeneratedFile } from '../../builds/types/build.types';
 import { WorkspaceWriter } from '../../builds/runtime/workspace-writer';
+import * as ts from 'typescript';
 
 describe('NestJsTestAdapter', () => {
   const adapter = new NestJsTestAdapter({} as never);
@@ -28,21 +29,27 @@ describe('NestJsTestAdapter', () => {
           PORT: null,
         },
       }),
+      expect.objectContaining({
+        args: ['run', 'typecheck'],
+        env: {
+          DATABASE_URL: null,
+          NODE_ENV: 'test',
+          PORT: null,
+        },
+      }),
     ]);
   });
 
   it('adds a managed Supertest E2E contract suite to every generated app', async () => {
     const workspace = {
       resolveInside: (_rootDir: string, filePath: string) => filePath,
-      readTextFile: jest
-        .fn()
-        .mockResolvedValue(
-          JSON.stringify({
-            name: 'generated-app',
-            scripts: {},
-            devDependencies: {},
-          }),
-        ),
+      readTextFile: jest.fn().mockResolvedValue(
+        JSON.stringify({
+          name: 'generated-app',
+          scripts: {},
+          devDependencies: {},
+        }),
+      ),
     } as unknown as WorkspaceWriter;
     const files = await new NestJsTestAdapter(workspace).harnessFiles('/app', {
       projectName: 'Generated app',
@@ -62,15 +69,38 @@ describe('NestJsTestAdapter', () => {
       sourceDocs: [],
     });
     const byPath = new Map(files.map((file) => [file.path, file.content]));
+    const generatedPackage = JSON.parse(byPath.get('package.json')!) as {
+      scripts: Record<string, string>;
+      jest: { testRegex: string };
+    };
 
-    expect(
-      JSON.parse(byPath.get('package.json')!).scripts['test:e2e'],
-    ).toContain('test/app.e2e-spec.ts');
+    expect(generatedPackage.scripts['test:e2e']).toContain(
+      'test/app.e2e-spec.ts',
+    );
     expect(byPath.get('test/app.e2e-spec.ts')).toContain(
       "import request from 'supertest'",
     );
     expect(byPath.get('test/app.e2e-spec.ts')).toContain('Create vehicle');
-    expect(byPath.get('test/app.e2e-spec.ts')).toContain('propertiesOf');
+    expect(byPath.get('test/app.e2e-spec.ts')).toContain('schemaOf');
+    expect(byPath.get('test/app.e2e-spec.ts')).toContain(
+      'executes generated CRUD routes against the real application',
+    );
+    expect(byPath.get('test/app.e2e-spec.ts')).toContain(
+      'rejects unknown request fields',
+    );
+    expect(generatedPackage.jest.testRegex).toContain('e2e-spec');
+    const syntax = ts.transpileModule(byPath.get('test/app.e2e-spec.ts')!, {
+      reportDiagnostics: true,
+      compilerOptions: {
+        target: ts.ScriptTarget.ES2022,
+        module: ts.ModuleKind.CommonJS,
+      },
+    });
+    expect(
+      syntax.diagnostics?.filter(
+        (diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error,
+      ),
+    ).toEqual([]);
   });
 
   it('builds a Jest command that verifies only one selected spec', () => {
@@ -108,6 +138,22 @@ describe('NestJsTestAdapter', () => {
 
     expect(output).toContain(
       "import { NotFoundException } from '@nestjs/common';",
+    );
+  });
+
+  it('casts partial Jest mock fixtures at the mock boundary for typecheck', () => {
+    const output = normalize(
+      [
+        "jest.spyOn(service, 'create').mockResolvedValue({ id: 'only-needed-field' });",
+        "jest.spyOn(repository, 'create').mockImplementation((value: Partial<Entity>) => value);",
+      ].join('\n'),
+    );
+
+    expect(output).toContain(
+      ".mockResolvedValue(({ id: 'only-needed-field' }) as never)",
+    );
+    expect(output).toContain(
+      '.mockImplementation(((value: Partial<Entity>) => value) as never)',
     );
   });
 

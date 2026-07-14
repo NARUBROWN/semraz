@@ -38,7 +38,7 @@ export class NestJsTestAdapter implements TestTargetAdapter {
               test: 'jest --runInBand',
               'test:cov': 'jest --coverage --runInBand',
               'test:e2e':
-                'jest --runInBand --runTestsByPath test/app.e2e-spec.ts',
+                'jest --runInBand --testRegex ".*\\.e2e-spec\\.ts$" --runTestsByPath test/app.e2e-spec.ts',
             },
             devDependencies: {
               ...this.asRecord(packageJson.devDependencies),
@@ -51,7 +51,7 @@ export class NestJsTestAdapter implements TestTargetAdapter {
             jest: {
               moduleFileExtensions: ['js', 'json', 'ts'],
               rootDir: '.',
-              testRegex: '.*\\.spec\\.ts$',
+              testRegex: '.*(?:\\.spec|\\.e2e-spec)\\.ts$',
               transform: {
                 // Specs run with lenient type checking; production code keeps
                 // its own strict tsconfig for the real build.
@@ -75,6 +75,8 @@ export class NestJsTestAdapter implements TestTargetAdapter {
                 '!src/main.ts',
                 '!src/**/*.module.ts',
                 '!src/**/*.entity.ts',
+                '!src/migrations/**/*.ts',
+                '!src/database/data-source.ts',
                 '!src/**/*.spec.ts',
               ],
               coverageDirectory: './coverage',
@@ -108,78 +110,200 @@ export class NestJsTestAdapter implements TestTargetAdapter {
       method: endpoint.method.toLowerCase(),
       path: endpoint.path.replace(/:([A-Za-z0-9_]+)/g, '{$1}'),
       requestFields: endpoint.requestFields
-        .map((field) => field.name)
+        .filter((field) => typeof field.name === 'string')
+        .map((field) => ({
+          name: field.name as string,
+          type: typeof field.type === 'string' ? field.type : '',
+          required: field.required === true,
+        }))
         .filter(
-          (name): name is string =>
-            typeof name === 'string' &&
-            !endpoint.path.includes(`:${name}`) &&
-            !endpoint.path.includes(`{${name}}`),
+          (field) =>
+            !endpoint.path.includes(`:${field.name}`) &&
+            !endpoint.path.includes(`{${field.name}}`),
         ),
+      responseFields: endpoint.responseFields
+        .filter((field) => typeof field.name === 'string')
+        .map((field) => ({
+          name: field.name as string,
+          type: typeof field.type === 'string' ? field.type : '',
+        })),
     }));
 
-    return [
-      "import { INestApplication, ValidationPipe } from '@nestjs/common';",
-      "import { Test } from '@nestjs/testing';",
-      "import { DocumentBuilder, OpenAPIObject, SwaggerModule } from '@nestjs/swagger';",
-      "import request from 'supertest';",
-      "import { AppModule } from '../src/app.module';",
-      '',
-      `const expectedEndpoints = ${JSON.stringify(endpoints, null, 2)} as const;`,
-      '',
-      "describe('Generated application contract (e2e)', () => {",
-      '  let app: INestApplication;',
-      '  let document: OpenAPIObject;',
-      '',
-      '  beforeAll(async () => {',
-      '    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();',
-      '    app = moduleRef.createNestApplication();',
-      '    app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));',
-      "    const config = new DocumentBuilder().setTitle('e2e').setVersion('1').build();",
-      '    document = SwaggerModule.createDocument(app, config);',
-      '    await app.init();',
-      '  });',
-      '',
-      '  afterAll(async () => {',
-      '    await app.close();',
-      '  });',
-      '',
-      "  it('boots the real application and serves health', async () => {",
-      "    await request(app.getHttpServer()).get('/health').expect(200).expect({ status: 'ok' });",
-      '  });',
-      '',
-      "  it('publishes every specified endpoint with a non-empty contract', () => {",
-      '    const propertiesOf = (schema: any): Record<string, unknown> => {',
-      '      if (!schema) return {};',
-      "      if (schema.$ref) return propertiesOf(document.components?.schemas?.[schema.$ref.split('/').pop()!]);",
-      '      return {',
-      '        ...(schema.properties ?? {}),',
-      '        ...Object.assign({}, ...(schema.allOf ?? []).map(propertiesOf)),',
-      '      };',
-      '    };',
-      '',
-      '    for (const endpoint of expectedEndpoints) {',
-      '      const operation = (document.paths[endpoint.path] as any)?.[endpoint.method];',
-      '      expect(operation).toBeDefined();',
-      '      expect(Object.keys(operation.responses ?? {}).some((status) => /^2\\d\\d$/.test(status))).toBe(true);',
-      '      if (endpoint.requestFields.length > 0) {',
-      "        const schema = operation.requestBody?.content?.['application/json']?.schema;",
-      '        const properties = propertiesOf(schema);',
-      '        expect(Object.keys(properties).length).toBeGreaterThan(0);',
-      '        for (const field of endpoint.requestFields) expect(properties).toHaveProperty(field);',
-      '      }',
-      '    }',
-      '  });',
-      '',
-      "  it('executes parameterless GET endpoints without server errors', async () => {",
-      '    for (const endpoint of expectedEndpoints) {',
-      "      if (endpoint.method !== 'get' || endpoint.path.includes('{')) continue;",
-      '      const response = await request(app.getHttpServer()).get(endpoint.path);',
-      '      expect(response.status).toBeLessThan(500);',
-      '    }',
-      '  });',
-      '});',
-      '',
-    ].join('\n');
+    return `import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { Test } from '@nestjs/testing';
+import { DocumentBuilder, OpenAPIObject, SwaggerModule } from '@nestjs/swagger';
+import request from 'supertest';
+import { AppModule } from '../src/app.module';
+
+type ExpectedEndpoint = {
+  operationName: string;
+  method: string;
+  path: string;
+  requestFields: ReadonlyArray<{ name: string; type: string; required: boolean }>;
+  responseFields: ReadonlyArray<{ name: string; type: string }>;
+};
+
+const expectedEndpoints: ReadonlyArray<ExpectedEndpoint> = ${JSON.stringify(endpoints, null, 2)};
+const fallbackUuid = '00000000-0000-4000-8000-000000000001';
+
+describe('Generated application contract (e2e)', () => {
+  let app: INestApplication;
+  let document: OpenAPIObject;
+  const values: Record<string, string | number | boolean> = {};
+
+  const schemaOf = (schema: any): any => {
+    if (!schema) return {};
+    if (schema.$ref) return schemaOf(document.components?.schemas?.[schema.$ref.split('/').pop()!]);
+    const allOf = (schema.allOf ?? []).map(schemaOf);
+    return {
+      ...schema,
+      properties: Object.assign({}, ...allOf.map((item: any) => item.properties ?? {}), schema.properties ?? {}),
+      required: Array.from(new Set([...(schema.required ?? []), ...allOf.flatMap((item: any) => item.required ?? [])])),
+    };
+  };
+
+  const resourceIdKey = (endpointPath: string): string => {
+    const segment = endpointPath.split('/').filter(Boolean)[0] ?? 'resource';
+    const singular = segment.replace(/ies$/, 'y').replace(/s$/, '');
+    return singular.replace(/-([a-z])/g, (_match, letter: string) => letter.toUpperCase()) + 'Id';
+  };
+
+  const isCrudEndpoint = (endpoint: ExpectedEndpoint): boolean => {
+    const segments = endpoint.path.split('/').filter(Boolean);
+    if (endpoint.method === 'post') return segments.length === 1;
+    if (endpoint.method === 'get') return segments.length === 1 || (segments.length === 2 && segments[1].startsWith('{'));
+    return ['put', 'patch', 'delete'].includes(endpoint.method) && segments.length === 2 && segments[1].startsWith('{');
+  };
+
+  const sampleValue = (name: string, typeHint: string, schema: any) => {
+    if (values[name] !== undefined) return { value: values[name], fallback: false };
+    if (Array.isArray(schema?.enum) && schema.enum.length > 0) return { value: schema.enum[0], fallback: false };
+    const type = String(schema?.type ?? typeHint).toLowerCase();
+    const format = String(schema?.format ?? '').toLowerCase();
+    if (format === 'uuid' || type.includes('uuid') || /Id$/.test(name)) {
+      return { value: fallbackUuid, fallback: /Id$/.test(name) };
+    }
+    if (format.includes('date') || type.includes('date') || /At$/.test(name)) {
+      return { value: new Date('2026-01-01T00:00:00.000Z').toISOString(), fallback: false };
+    }
+    if (type === 'integer' || type === 'number' || /int|decimal|float/.test(type)) {
+      return { value: Math.max(Number(schema?.minimum ?? 1), 1), fallback: false };
+    }
+    if (type === 'boolean') return { value: true, fallback: false };
+    return { value: 'e2e-' + name, fallback: false };
+  };
+
+  const requestBodyFor = (endpoint: ExpectedEndpoint, operation: any) => {
+    const schema = schemaOf(operation.requestBody?.content?.['application/json']?.schema);
+    const fields = new Map<string, { type: string }>();
+    for (const field of endpoint.requestFields) fields.set(field.name, field);
+    for (const name of Object.keys(schema.properties ?? {})) {
+      if ((schema.required ?? []).includes(name) || fields.has(name)) fields.set(name, fields.get(name) ?? { type: '' });
+    }
+    let fallback = false;
+    const body: Record<string, unknown> = {};
+    for (const [name, field] of fields) {
+      const sample = sampleValue(name, field.type, schema.properties?.[name]);
+      body[name] = sample.value;
+      fallback ||= sample.fallback;
+    }
+    return { body, fallback };
+  };
+
+  const concretePath = (endpoint: ExpectedEndpoint) => {
+    let fallback = false;
+    const resourceKey = resourceIdKey(endpoint.path);
+    const path = endpoint.path.replace(/[{]([A-Za-z0-9_]+)[}]/g, (_match, name: string) => {
+      const value = values[name] ?? (name === 'id' ? values[resourceKey] : undefined);
+      if (value === undefined) fallback = true;
+      return encodeURIComponent(String(value ?? fallbackUuid));
+    });
+    return { path, fallback };
+  };
+
+  const rememberResponse = (endpoint: ExpectedEndpoint, body: unknown) => {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return;
+    const record = body as Record<string, unknown>;
+    for (const [name, value] of Object.entries(record)) {
+      if (['string', 'number', 'boolean'].includes(typeof value)) values[name] = value as string | number | boolean;
+    }
+    const id = record.id ?? Object.entries(record).find(([name]) => /Id$/.test(name))?.[1];
+    if (typeof id === 'string') values[resourceIdKey(endpoint.path)] = id;
+  };
+
+  beforeAll(async () => {
+    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+    app = moduleRef.createNestApplication();
+    app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
+    const config = new DocumentBuilder().setTitle('e2e').setVersion('1').build();
+    document = SwaggerModule.createDocument(app, config);
+    await app.init();
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  it('boots the real application and serves health', async () => {
+    await request(app.getHttpServer()).get('/health').expect(200).expect({ status: 'ok' });
+  });
+
+  it('publishes every specified endpoint and request field in OpenAPI', () => {
+    for (const endpoint of expectedEndpoints) {
+      const operation = (document.paths[endpoint.path] as any)?.[endpoint.method];
+      expect(operation).toBeDefined();
+      expect(Object.keys(operation.responses ?? {}).some((status) => /^2[0-9][0-9]$/.test(status))).toBe(true);
+      const schema = schemaOf(operation.requestBody?.content?.['application/json']?.schema);
+      if (endpoint.requestFields.length > 0) expect(Object.keys(schema.properties ?? {}).length).toBeGreaterThan(0);
+      for (const field of endpoint.requestFields) {
+        expect(schema.properties ?? {}).toHaveProperty(field.name);
+        if (field.required) expect(schema.required ?? []).toContain(field.name);
+      }
+    }
+  });
+
+  it('rejects unknown request fields for every JSON body endpoint', async () => {
+    for (const endpoint of expectedEndpoints) {
+      const operation = (document.paths[endpoint.path] as any)?.[endpoint.method];
+      if (!operation?.requestBody?.content?.['application/json']) continue;
+      const route = concretePath(endpoint).path;
+      const body = requestBodyFor(endpoint, operation).body;
+      const response = await (request(app.getHttpServer()) as any)[endpoint.method](route).send({ ...body, __unexpected: true });
+      expect(response.status).toBe(400);
+    }
+  });
+
+  it('executes generated CRUD routes against the real application', async () => {
+    const order: Record<string, number> = { post: 0, get: 1, put: 2, patch: 2, delete: 3 };
+    const indexed = expectedEndpoints.map((endpoint, index) => ({ endpoint, index }));
+    indexed.sort((left, right) => {
+      const rank = (order[left.endpoint.method] ?? 10) - (order[right.endpoint.method] ?? 10);
+      if (rank !== 0) return rank;
+      return left.endpoint.method === 'delete' ? right.index - left.index : left.index - right.index;
+    });
+
+    for (const { endpoint } of indexed) {
+      if (!(endpoint.method in order) || !isCrudEndpoint(endpoint)) continue;
+      const operation = (document.paths[endpoint.path] as any)?.[endpoint.method];
+      const concrete = concretePath(endpoint);
+      const generated = requestBodyFor(endpoint, operation);
+      let call = (request(app.getHttpServer()) as any)[endpoint.method](concrete.path);
+      if (operation?.requestBody) call = call.send(generated.body);
+      const response = await call;
+      expect(response.status).toBeLessThan(500);
+      const usedFallback = concrete.fallback || generated.fallback;
+      if (!usedFallback && endpoint.method !== 'delete') {
+        expect(response.status).toBeGreaterThanOrEqual(200);
+        expect(response.status).toBeLessThan(300);
+      }
+      if (!usedFallback && endpoint.method === 'delete') {
+        expect(response.status < 300 || response.status === 409).toBe(true);
+      }
+      if (response.status >= 200 && response.status < 300) rememberResponse(endpoint, response.body);
+    }
+  });
+});
+`;
   }
 
   isTestFile(path: string): boolean {
@@ -267,7 +391,63 @@ export class NestJsTestAdapter implements TestTargetAdapter {
       /\.mockImplementation\(\(\)\s*=>\s*\{\s*throw\s+([^;{}]+?);?\s*\}\)/g,
       '.mockRejectedValue($1)',
     );
-    return this.ensureNestCommonImports(rewritten);
+    return this.ensureNestCommonImports(this.castJestMockArguments(rewritten));
+  }
+
+  /**
+   * TypeORM repository and Nest service methods commonly expose overloaded or
+   * relation-rich return types. Generated mock fixtures intentionally contain
+   * only the fields relevant to each assertion, so Jest's overload inference
+   * can reject an otherwise valid fixture during `tsc --noEmit`. Cast only the
+   * boundary argument passed into Jest's mock API; production types and the
+   * fixture body remain unchanged and the complete generated suite typechecks.
+   */
+  private castJestMockArguments(content: string): string {
+    const source = ts.createSourceFile(
+      'generated.spec.ts',
+      content,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS,
+    );
+    const mockMethods = new Set([
+      'mockImplementation',
+      'mockImplementationOnce',
+      'mockRejectedValue',
+      'mockRejectedValueOnce',
+      'mockResolvedValue',
+      'mockResolvedValueOnce',
+      'mockReturnValue',
+      'mockReturnValueOnce',
+    ]);
+    const edits: Array<{ start: number; end: number; text: string }> = [];
+    const visit = (node: ts.Node) => {
+      if (
+        ts.isCallExpression(node) &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        mockMethods.has(node.expression.name.text) &&
+        node.arguments[0]
+      ) {
+        const argument = node.arguments[0];
+        const text = argument.getText(source);
+        if (!/\bas\s+never\s*$/.test(text)) {
+          edits.push({
+            start: argument.getStart(source),
+            end: argument.end,
+            text: `(${text}) as never`,
+          });
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(source);
+    return edits
+      .sort((left, right) => right.start - left.start)
+      .reduce(
+        (result, edit) =>
+          `${result.slice(0, edit.start)}${edit.text}${result.slice(edit.end)}`,
+        content,
+      );
   }
 
   // HTTP exception classes exported by @nestjs/common. Specs routinely
@@ -1080,6 +1260,16 @@ export class NestJsTestAdapter implements TestTargetAdapter {
         command: 'npm',
         args: ['run', 'test:cov'],
         description: 'Run generated Jest tests with coverage',
+        env: {
+          DATABASE_URL: null,
+          NODE_ENV: 'test',
+          PORT: null,
+        },
+      },
+      {
+        command: 'npm',
+        args: ['run', 'typecheck'],
+        description: 'Type-check application source and generated Jest mocks',
         env: {
           DATABASE_URL: null,
           NODE_ENV: 'test',
