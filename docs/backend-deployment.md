@@ -9,6 +9,14 @@
 
 Node.js와 PM2를 설치하고 저장소를 한 번 clone한다.
 
+OpenAI 코드 생성 요청은 기본적으로 호출당 180초를 기다리고 최대 2회
+재시도한다. 더 긴 생성 작업이 필요하면 PM2 환경에 다음 값을 설정할 수 있다.
+
+```bash
+OPENAI_TIMEOUT_MS=300000
+OPENAI_MAX_RETRIES=2
+```
+
 ```bash
 git clone https://github.com/NARUBROWN/semraz.git ~/semraz
 cd ~/semraz

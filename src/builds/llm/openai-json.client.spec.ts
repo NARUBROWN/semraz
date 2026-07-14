@@ -1,6 +1,29 @@
 import { OpenAiJsonClient } from './openai-json.client';
 
 describe('OpenAiJsonClient', () => {
+  it('uses a longer configurable timeout for code-generation requests', () => {
+    const config = {
+      get: jest.fn((key: string) => {
+        if (key === 'OPENAI_API_KEY') return undefined;
+        if (key === 'OPENAI_TIMEOUT_MS') return '240000';
+        if (key === 'OPENAI_MAX_RETRIES') return '1';
+        return undefined;
+      }),
+    };
+    const client = new OpenAiJsonClient(config as never, {} as never) as any;
+
+    expect(client.timeoutMs).toBe(240_000);
+    expect(client.maxRetries).toBe(1);
+  });
+
+  it('defaults to a three-minute timeout and two retries', () => {
+    const config = { get: jest.fn().mockReturnValue(undefined) };
+    const client = new OpenAiJsonClient(config as never, {} as never) as any;
+
+    expect(client.timeoutMs).toBe(180_000);
+    expect(client.maxRetries).toBe(2);
+  });
+
   it('always includes the literal json requirement in the Responses input', async () => {
     const config = {
       get: jest.fn((key: string) =>

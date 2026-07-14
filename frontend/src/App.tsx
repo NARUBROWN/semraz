@@ -423,6 +423,8 @@ Generate a reliable backend from a reviewed Semraz spec.
     'test.progress.runCoverage': 'Running test coverage and verification',
     'test.progress.attempt': 'Test attempt {attempt}: {phase}',
     'test.progress.attemptFailed': 'Test attempt {attempt} needs fixes',
+    'test.progress.generatedFile': 'Generated test: {path}',
+    'test.progress.patchedFile': 'Updated test: {path}',
     'common.backHome': '← Back to home',
     'footer.tagline': 'From idea to a tested backend, in one guided flow.',
     'footer.colProduct': 'Product',
@@ -747,13 +749,15 @@ Generate a reliable backend from a reviewed Semraz spec.
     'test.attempts': '시도 횟수',
     'test.generatedFiles': '생성된 테스트',
     'test.changedFiles': '변경된 파일',
-    'test.progress.understandSpec': '엔드포인트/함수 명세 분석 중',
-    'test.progress.searchCodebase': '생성된 NestJS 코드베이스 검색 중',
-    'test.progress.generateTestCode': 'Jest 테스트 코드 생성 중',
-    'test.progress.applyPatch': '생성된 테스트 파일 적용 중',
-    'test.progress.runCoverage': '테스트 커버리지 및 검증 실행 중',
+    'test.progress.understandSpec': '엔드포인트/함수 명세 분석',
+    'test.progress.searchCodebase': '생성된 NestJS 코드베이스 검색',
+    'test.progress.generateTestCode': 'Jest 테스트 코드 생성',
+    'test.progress.applyPatch': '생성된 테스트 파일 적용',
+    'test.progress.runCoverage': '테스트 커버리지 및 검증 실행',
     'test.progress.attempt': '{attempt}차 테스트: {phase}',
     'test.progress.attemptFailed': '{attempt}차 테스트 수정 필요',
+    'test.progress.generatedFile': '생성한 테스트: {path}',
+    'test.progress.patchedFile': '수정한 테스트: {path}',
     'common.backHome': '← 홈으로 돌아가기',
     'footer.tagline': '아이디어부터 테스트된 백엔드까지, 하나의 흐름으로.',
     'footer.colProduct': '제품',
@@ -6154,37 +6158,77 @@ function TestStep({
     const lineText = isTestPhase
       ? t('test.progress.attempt', { attempt, phase: localizedMessage })
       : localizedMessage
+    const failureDetails =
+      progress.stage === 'failed' && typeof progress.detail?.error === 'string'
+        ? progress.detail.error
+            .split('\n')
+            .map((line) => line.trim())
+            .filter(Boolean)
+            .slice(0, 8)
+            .map((line) => line.slice(0, 500))
+        : []
+    const generatedTestDetails =
+      progress.stage === 'completed' && Array.isArray(progress.detail?.generatedTests)
+        ? progress.detail.generatedTests.flatMap((entry: unknown) => {
+            if (!entry || typeof entry !== 'object' || !('path' in entry)) return []
+            const path = typeof entry.path === 'string' ? entry.path : ''
+            if (!path) return []
+            const cases: string[] =
+              'cases' in entry && Array.isArray(entry.cases)
+                ? entry.cases.filter((name: unknown): name is string => typeof name === 'string')
+                : []
+            return [
+              t('test.progress.generatedFile', { path }),
+              ...cases.map((name) => `  ↳ ${name}`),
+            ]
+          })
+        : []
+    const patchedTestDetails =
+      progress.stage === 'completed' && Array.isArray(progress.detail?.patchedTestFiles)
+        ? progress.detail.patchedTestFiles
+            .filter((path): path is string => typeof path === 'string')
+            .map((path) => t('test.progress.patchedFile', { path }))
+        : []
 
     setTerminalLines((currentLines) => {
       const lastLine = currentLines[currentLines.length - 1]
 
       if (isTestPhase && progress.stage === 'started') {
-        if (lastLine?.status === 'running') {
-          return [...currentLines.slice(0, -1), { ...lastLine, text: lineText }]
+        if (lastLine?.status === 'running' && lastLine.text === lineText) {
+          return currentLines
         }
 
-        return [...currentLines, makeTerminalLine('running', lineText)]
+        const settledLines =
+          lastLine?.status === 'running'
+            ? [...currentLines.slice(0, -1), { ...lastLine, status: 'success' as const }]
+            : currentLines
+        return [...settledLines, makeTerminalLine('running', lineText)]
       }
 
       if (isTestPhase && progress.stage === 'completed') {
-        return currentLines
-      }
-
-      if (isTestPhase && progress.stage === 'failed') {
-        if (lastLine?.status === 'running') {
+        const detailLines = [...generatedTestDetails, ...patchedTestDetails].map((line) =>
+          makeTerminalLine('idle', line),
+        )
+        if (lastLine?.status === 'running' && lastLine.text === lineText) {
           return [
             ...currentLines.slice(0, -1),
-            {
-              ...lastLine,
-              status: 'error',
-              text: t('test.progress.attemptFailed', { attempt }),
-            },
+            { ...lastLine, status: 'success' },
+            ...detailLines,
           ]
         }
 
+        return [...currentLines, makeTerminalLine('success', lineText), ...detailLines]
+      }
+
+      if (isTestPhase && progress.stage === 'failed') {
+        const failedLines =
+          lastLine?.status === 'running' && lastLine.text === lineText
+            ? [...currentLines.slice(0, -1), { ...lastLine, status: 'error' as const }]
+            : [...currentLines, makeTerminalLine('error', lineText)]
         return [
-          ...currentLines,
+          ...failedLines,
           makeTerminalLine('error', t('test.progress.attemptFailed', { attempt })),
+          ...failureDetails.map((line) => makeTerminalLine('error', line)),
         ]
       }
 

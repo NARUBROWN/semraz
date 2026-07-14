@@ -229,7 +229,7 @@ export class ApplicationTestGraph {
           message,
           detail: failed
             ? { ...detail, error: result.testResult?.errorSummary }
-            : detail,
+            : { ...detail, ...this.generatedTestProgress(message, result) },
         });
         return result;
       } catch (error) {
@@ -258,6 +258,26 @@ export class ApplicationTestGraph {
     }
 
     return state.attempts + 1;
+  }
+
+  private generatedTestProgress(
+    message: string,
+    result: Partial<TestStateType>,
+  ): Record<string, unknown> {
+    if (message !== 'Generating framework test code') {
+      return {};
+    }
+
+    return {
+      generatedTests: (result.generatedFiles ?? []).map((file) => ({
+        path: file.path,
+        cases: Array.from(
+          file.content.matchAll(/\b(?:describe|it|test)\s*\(\s*(['"`])([^\n]*?)\1/g),
+          (match) => match[2].trim(),
+        ).filter(Boolean).slice(0, 20),
+      })),
+      patchedTestFiles: (result.currentPatches ?? []).map((patch) => patch.path),
+    };
   }
 
   private normalizeRequest(dto: TestRequestDto): NormalizedTestRequest {

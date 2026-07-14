@@ -15,6 +15,8 @@ export type LlmCallContext = {
 export class OpenAiJsonClient {
   private readonly client?: OpenAI;
   private readonly model: string;
+  private readonly timeoutMs: number;
+  private readonly maxRetries: number;
 
   constructor(
     config: ConfigService,
@@ -22,8 +24,20 @@ export class OpenAiJsonClient {
     private readonly usageRepo: Repository<LlmUsageLog>,
   ) {
     const apiKey = config.get<string>('OPENAI_API_KEY');
+    this.timeoutMs = this.positiveInteger(
+      config.get<string>('OPENAI_TIMEOUT_MS'),
+      180_000,
+    );
+    this.maxRetries = this.nonNegativeInteger(
+      config.get<string>('OPENAI_MAX_RETRIES'),
+      2,
+    );
     this.client = apiKey
-      ? new OpenAI({ apiKey, timeout: 60000, maxRetries: 5 })
+      ? new OpenAI({
+          apiKey,
+          timeout: this.timeoutMs,
+          maxRetries: this.maxRetries,
+        })
       : undefined;
     this.model = config.get<string>('OPENAI_MODEL') ?? 'gpt-4o-mini';
   }
@@ -95,5 +109,18 @@ export class OpenAiJsonClient {
 
   private supportsTemperature(model: string): boolean {
     return !model.toLowerCase().startsWith('gpt-5');
+  }
+
+  private positiveInteger(value: string | undefined, fallback: number): number {
+    const parsed = Number(value);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+  }
+
+  private nonNegativeInteger(
+    value: string | undefined,
+    fallback: number,
+  ): number {
+    const parsed = Number(value);
+    return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
   }
 }
