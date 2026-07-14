@@ -1,106 +1,120 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import type {
   CSSProperties,
   FormEvent,
   MouseEvent as ReactMouseEvent,
   PointerEvent,
   WheelEvent as ReactWheelEvent,
-} from 'react'
-import { Routes, Route, Navigate, Link, useNavigate, useParams } from 'react-router-dom'
-import FeedbackWidget from './feedback/FeedbackWidget'
-import './App.css'
+} from 'react';
+import {
+  Routes,
+  Route,
+  Navigate,
+  Link,
+  useNavigate,
+  useParams,
+} from 'react-router-dom';
+import FeedbackWidget from './feedback/FeedbackWidget';
+import './App.css';
 
 type User = {
-  id: string
-  name: string
-  email: string
-  role: string
-}
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+};
 
 type AuthResponse = {
-  accessToken: string
-  refreshToken: string
-  user: User
-}
+  accessToken: string;
+  refreshToken: string;
+  user: User;
+};
 
 type Project = {
-  id: string
-  name: string
-  description: string
-  framework: string
-  database: string
-  status: 'planning' | 'compile_failed' | 'verified'
-  currentStep: string
-  updatedAt: string
-  workspaceId?: string
-  workspacePath?: string
-  nestJsAppPath?: string
-  flowStep?: number
-  draftProject?: DraftProject
-  entities?: ErdEntity[]
-  relations?: ErdRelation[]
-  operations?: BackendOperation[]
-  generatedWorkspace?: GenerateWorkspace
-  generatedNestResult?: NestJsAgentResult
-  testAgentResult?: TestAgentResult
+  id: string;
+  name: string;
+  description: string;
+  framework: string;
+  database: string;
+  status: 'planning' | 'compile_failed' | 'verified';
+  currentStep: string;
+  updatedAt: string;
+  workspaceId?: string;
+  workspacePath?: string;
+  nestJsAppPath?: string;
+  flowStep?: number;
+  draftProject?: DraftProject;
+  entities?: ErdEntity[];
+  relations?: ErdRelation[];
+  operations?: BackendOperation[];
+  generatedWorkspace?: GenerateWorkspace;
+  generatedNestResult?: NestJsAgentResult;
+  testAgentResult?: TestAgentResult;
   metrics: {
-    entities: number
-    operations: number
-    tests: number
-    coverage?: string
-  }
-}
+    entities: number;
+    operations: number;
+    tests: number;
+    coverage?: string;
+  };
+};
 
 type CompletedProjectPayload = {
-  name: string
-  description: string
-  framework: string
-  database: string
-  workspaceId?: string
-  workspacePath?: string
-  nestJsAppPath?: string
-  metrics: Project['metrics']
-}
+  name: string;
+  description: string;
+  framework: string;
+  database: string;
+  workspaceId?: string;
+  workspacePath?: string;
+  nestJsAppPath?: string;
+  metrics: Project['metrics'];
+};
 
 type WorkspaceSnapshot = {
-  name: string
-  description: string
-  framework: string
-  database: string
-  status: Project['status']
-  currentStep: string
-  flowStep: number
-  workspaceId?: string | null
-  workspacePath?: string | null
-  nestJsAppPath?: string | null
-  metrics: Project['metrics']
-  draftProject: DraftProject
-  entities?: ErdEntity[]
-  relations?: ErdRelation[]
-  operations?: BackendOperation[]
-  generatedWorkspace?: GenerateWorkspace | null
-  generatedNestResult?: NestJsAgentResult | null
-  testAgentResult?: TestAgentResult | null
-}
+  name: string;
+  description: string;
+  framework: string;
+  database: string;
+  status: Project['status'];
+  currentStep: string;
+  flowStep: number;
+  workspaceId?: string | null;
+  workspacePath?: string | null;
+  nestJsAppPath?: string | null;
+  metrics: Project['metrics'];
+  draftProject: DraftProject;
+  entities?: ErdEntity[];
+  relations?: ErdRelation[];
+  operations?: BackendOperation[];
+  generatedWorkspace?: GenerateWorkspace | null;
+  generatedNestResult?: NestJsAgentResult | null;
+  testAgentResult?: TestAgentResult | null;
+};
 
 type DraftProject = {
-  name: string
-  description: string
-  framework: 'NestJS'
-  database: 'PostgreSQL' | 'MySQL'
+  name: string;
+  description: string;
+  framework: 'NestJS';
+  database: 'PostgreSQL' | 'MySQL';
   planning: {
-    purpose: string
-    constraints: string
-  }
-}
+    purpose: string;
+    constraints: string;
+  };
+};
 
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
-const aiWizardTimeoutMs = 60000
-const accessTokenStorageKey = 'semraz-access-token'
-const refreshTokenStorageKey = 'semraz-refresh-token'
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000';
+const aiWizardTimeoutMs = 60000;
+const accessTokenStorageKey = 'semraz-access-token';
+const refreshTokenStorageKey = 'semraz-refresh-token';
 
-type Language = 'en' | 'ko'
-type TranslationValues = Record<string, string | number>
+type Language = 'en' | 'ko';
+type TranslationValues = Record<string, string | number>;
 
 const translations = {
   en: {
@@ -134,7 +148,8 @@ const translations = {
     'error.passwordWeak':
       'Use a stronger password: at least 10 characters with letters, numbers, and a special character.',
     'error.emailTaken': 'This email is already registered.',
-    'error.signupRateLimited': 'This IP address can create one account every 3 days.',
+    'error.signupRateLimited':
+      'This IP address can create one account every 3 days.',
     'error.emailInvalid': 'Use a valid email address.',
     'error.projectsFailed': 'Could not load projects.',
     'error.unexpectedLogin': 'Unexpected login error.',
@@ -146,7 +161,8 @@ const translations = {
     'error.agentStream': 'Could not keep the NestJS agent event stream open.',
     'error.testAgentUnexpected': 'Unexpected test agent error.',
     'error.testAgentFailed': 'Test agent failed.',
-    'error.testAgentStream': 'Could not keep the NestJS test agent event stream open.',
+    'error.testAgentStream':
+      'Could not keep the NestJS test agent event stream open.',
     'status.planning': 'Planning',
     'status.compile_failed': 'Compile failed',
     'status.verified': 'Verified',
@@ -195,7 +211,8 @@ Generate a reliable backend from a reviewed Semraz spec.
     'flow.finish': 'Finish project',
     'flow.next': 'Next',
     'flow.warnLossTitle': 'Go back?',
-    'flow.warnLossBody': 'Changes in the current and later steps will be cleared if you go back.',
+    'flow.warnLossBody':
+      'Changes in the current and later steps will be cleared if you go back.',
     'flow.warnLossConfirm': 'Go back',
     'flow.warnLossCancel': 'Stay',
     'ai.open': 'AI Wizard',
@@ -209,12 +226,14 @@ Generate a reliable backend from a reviewed Semraz spec.
     'ai.projectCopy':
       'Draft a concrete backend idea, description, and database choice to start the project.',
     'ai.planningTitle': 'Planning assistant',
-    'ai.planningCopy': 'Use the project basics to write the backend purpose and code constraints.',
+    'ai.planningCopy':
+      'Use the project basics to write the backend purpose and code constraints.',
     'ai.erdTitle': 'ERD assistant',
     'ai.erdCopy':
       'Use the project and planning notes to generate a first entity model and relationships.',
     'ai.operationsTitle': 'API assistant',
-    'ai.operationsCopy': 'Recommend API specifications from the project, planning notes, and ERD.',
+    'ai.operationsCopy':
+      'Recommend API specifications from the project, planning notes, and ERD.',
     'ai.unavailable': 'AI design is not used in this step.',
     'project.basics': 'Project basics',
     'project.name': 'Name',
@@ -226,21 +245,25 @@ Generate a reliable backend from a reviewed Semraz spec.
     'project.framework': 'Target framework',
     'project.nestDescription':
       'NestJS is a TypeScript-first Node.js framework for building scalable backend APIs with modules, controllers, providers, decorators, validation, and testing.',
-    'project.goDescription': 'Static, fast, compile-checked service generation.',
-    'project.pythonDescription': 'Pydantic models, routers, OpenAPI, and quick iteration.',
+    'project.goDescription':
+      'Static, fast, compile-checked service generation.',
+    'project.pythonDescription':
+      'Pydantic models, routers, OpenAPI, and quick iteration.',
     'project.comingSoon': 'Coming soon',
     'planning.inputs': 'Planning inputs',
     'planning.scaffold': 'Scaffold sections',
     'planning.purpose': 'Purpose',
     'planning.constraints': 'Constraints',
-    'planning.purposePlaceholder': 'Describe what this application should accomplish.',
+    'planning.purposePlaceholder':
+      'Describe what this application should accomplish.',
     'planning.constraintsPlaceholder':
       'List coding rules, architecture constraints, and validation requirements.',
     'planning.preview': 'skills.md preview',
     'planning.autosaved': 'Autosaved locally',
     'planning.checks': 'Assistant checks',
     'planning.checkPurpose': 'Purpose is present and project-specific',
-    'planning.checkConstraints': 'Constraints define the NestJS generation boundary',
+    'planning.checkConstraints':
+      'Constraints define the NestJS generation boundary',
     'planning.checkCompile': 'NestJS compile/test constraints are explicit',
     'planning.scaffoldPurpose':
       'Build a reliable NestJS backend from a reviewed Semraz specification.',
@@ -253,7 +276,8 @@ Generate a reliable backend from a reviewed Semraz spec.
     'skills.language': 'Language',
     'skills.database': 'Database',
     'skills.verification': 'Verification',
-    'skills.verificationValue': 'generated code must compile before tests are created',
+    'skills.verificationValue':
+      'generated code must compile before tests are created',
     'erd.addEntity': 'Add entity',
     'erd.entityPlaceholder': 'Entity name',
     'erd.columnPlaceholder': 'Column name',
@@ -301,7 +325,8 @@ Generate a reliable backend from a reviewed Semraz spec.
     'ops.path': 'Path',
     'ops.pathPlaceholder': '/resource/:id',
     'ops.description': 'API description',
-    'ops.descriptionPlaceholder': 'Describe the request, validation, and response.',
+    'ops.descriptionPlaceholder':
+      'Describe the request, validation, and response.',
     'ops.requirements': 'Implementation requirements',
     'ops.requirementsPlaceholder':
       'Specify authorization, validation, state changes, failure handling, and integration behavior.',
@@ -368,7 +393,8 @@ Generate a reliable backend from a reviewed Semraz spec.
     'generate.progress.planFiles': 'Planning NestJS bootstrap files',
     'generate.progress.generateFiles': 'Generating NestJS bootstrap files',
     'generate.progress.writeFiles': 'Writing bootstrap files to workspace',
-    'generate.progress.runBuild': 'Installing dependencies and compiling bootstrap app',
+    'generate.progress.runBuild':
+      'Installing dependencies and compiling bootstrap app',
     'generate.progress.repairFiles': 'Repairing bootstrap build failures',
     'generate.progress.planBuildTasks': 'Planning entity, ORM, and CRUD tasks',
     'generate.progress.selectNextTask': 'Selecting next generation task',
@@ -381,11 +407,14 @@ Generate a reliable backend from a reviewed Semraz spec.
     'generate.progress.recordCompleted': 'Recording completed task',
     'generate.progress.recordFailed': 'Recording failed task',
     'generate.progress.runFinalBuild': 'Running final NestJS app build',
-    'generate.progress.runFinalSmoke': 'Running final HTTP and Swagger smoke check',
-    'generate.progress.validateFinalContracts': 'Validating the final application contract',
+    'generate.progress.runFinalSmoke':
+      'Running final HTTP and Swagger smoke check',
+    'generate.progress.validateFinalContracts':
+      'Validating the final application contract',
     'generate.progress.repairFinalBuild': 'Repairing final build failures',
     'generate.progress.restoreUserFiles': 'Restoring user-authored files',
-    'generate.progress.packageArtifact': 'Collecting generated artifact summary',
+    'generate.progress.packageArtifact':
+      'Collecting generated artifact summary',
     'generate.task.entityFields': '{entity} entity fields',
     'generate.task.entityRelations': '{entity} entity relations',
     'generate.task.ormRegistration': 'ORM registration',
@@ -405,7 +434,8 @@ Generate a reliable backend from a reviewed Semraz spec.
     'test.passing': 'Passing',
     'test.failing': 'Failing',
     'test.coverage': 'Coverage',
-    'test.ready': '{framework} backend is ready to export, push to Git, or deploy.',
+    'test.ready':
+      '{framework} backend is ready to export, push to Git, or deploy.',
     'test.agentTitle': 'Test agent',
     'test.notReady': 'Create a verified NestJS app in the Generate step first.',
     'test.runAgent': 'Generate and run tests',
@@ -416,7 +446,8 @@ Generate a reliable backend from a reviewed Semraz spec.
     'test.attempts': 'Attempts',
     'test.generatedFiles': 'Generated tests',
     'test.changedFiles': 'Changed files',
-    'test.progress.understandSpec': 'Understanding endpoint/function specifications',
+    'test.progress.understandSpec':
+      'Understanding endpoint/function specifications',
     'test.progress.searchCodebase': 'Searching generated NestJS codebase',
     'test.progress.generateTestCode': 'Generating Jest test code',
     'test.progress.applyPatch': 'Applying generated test files',
@@ -488,7 +519,8 @@ Generate a reliable backend from a reviewed Semraz spec.
     'error.agentStream': 'NestJS 에이전트 이벤트 스트림을 유지할 수 없습니다.',
     'error.testAgentUnexpected': '예상치 못한 테스트 에이전트 오류입니다.',
     'error.testAgentFailed': '테스트 에이전트가 실패했습니다.',
-    'error.testAgentStream': 'NestJS 테스트 에이전트 이벤트 스트림을 유지할 수 없습니다.',
+    'error.testAgentStream':
+      'NestJS 테스트 에이전트 이벤트 스트림을 유지할 수 없습니다.',
     'status.planning': '계획 중',
     'status.compile_failed': '컴파일 실패',
     'status.verified': '검증됨',
@@ -537,7 +569,8 @@ Generate a reliable backend from a reviewed Semraz spec.
     'flow.finish': '프로젝트 완료',
     'flow.next': '다음',
     'flow.warnLossTitle': '이전 단계로 돌아가시겠습니까?',
-    'flow.warnLossBody': '현재 단계와 이후 단계에서 작성한 내용이 초기화됩니다.',
+    'flow.warnLossBody':
+      '현재 단계와 이후 단계에서 작성한 내용이 초기화됩니다.',
     'flow.warnLossConfirm': '돌아가기',
     'flow.warnLossCancel': '머무르기',
     'ai.open': 'AI 마법사',
@@ -546,42 +579,51 @@ Generate a reliable backend from a reviewed Semraz spec.
     'ai.apply': 'AI 초안 만들기',
     'ai.applying': '설계 중...',
     'ai.failed': 'AI Provider 요청에 실패했습니다.',
-    'ai.timeout': 'AI Provider 요청 시간이 너무 오래 걸렸습니다. 다시 시도해주세요.',
+    'ai.timeout':
+      'AI Provider 요청 시간이 너무 오래 걸렸습니다. 다시 시도해주세요.',
     'ai.projectTitle': '프로젝트 아이디어 보조',
     'ai.projectCopy':
       '백엔드 프로젝트의 첫 아이디어, 설명, 데이터베이스 선택을 구체적인 초안으로 만듭니다.',
     'ai.planningTitle': '계획 보조',
-    'ai.planningCopy': '프로젝트 기본 정보를 바탕으로 목적과 코드 컨벤션/제약사항을 작성합니다.',
+    'ai.planningCopy':
+      '프로젝트 기본 정보를 바탕으로 목적과 코드 컨벤션/제약사항을 작성합니다.',
     'ai.erdTitle': 'ERD 보조',
-    'ai.erdCopy': '프로젝트와 계획 내용을 바탕으로 첫 엔티티 모델과 관계를 생성합니다.',
+    'ai.erdCopy':
+      '프로젝트와 계획 내용을 바탕으로 첫 엔티티 모델과 관계를 생성합니다.',
     'ai.operationsTitle': 'API 보조',
-    'ai.operationsCopy': '프로젝트, 계획, ERD를 바탕으로 추천 API 명세를 작성합니다.',
+    'ai.operationsCopy':
+      '프로젝트, 계획, ERD를 바탕으로 추천 API 명세를 작성합니다.',
     'ai.unavailable': '이 단계에서는 AI 설계를 사용하지 않습니다.',
     'project.basics': '프로젝트 기본 정보',
     'project.name': '이름',
     'project.database': '데이터베이스',
     'project.description': '설명',
     'project.namePlaceholder': '예: 커머스 API',
-    'project.descriptionPlaceholder': '애플리케이션의 사용자, 목적, 핵심 흐름을 간단히 적어주세요.',
+    'project.descriptionPlaceholder':
+      '애플리케이션의 사용자, 목적, 핵심 흐름을 간단히 적어주세요.',
     'project.framework': '대상 프레임워크',
     'project.nestDescription':
       'NestJS는 TypeScript 기반 Node.js 서버 프레임워크로, 모듈, 컨트롤러, 프로바이더, 데코레이터, 검증, 테스트 구조를 통해 확장 가능한 백엔드 API를 체계적으로 구축합니다.',
     'project.goDescription': '정적이고 빠른 컴파일 검증 서비스 생성입니다.',
-    'project.pythonDescription': 'Pydantic 모델, 라우터, OpenAPI, 빠른 반복 개발입니다.',
+    'project.pythonDescription':
+      'Pydantic 모델, 라우터, OpenAPI, 빠른 반복 개발입니다.',
     'project.comingSoon': '준비 중',
     'planning.inputs': '계획 입력',
     'planning.scaffold': '섹션 생성',
     'planning.purpose': '목적',
     'planning.constraints': '제약 조건',
-    'planning.purposePlaceholder': '이 애플리케이션이 달성해야 하는 목적을 적어주세요.',
-    'planning.constraintsPlaceholder': '코드 규칙, 아키텍처 제약, 검증 요구사항을 적어주세요.',
+    'planning.purposePlaceholder':
+      '이 애플리케이션이 달성해야 하는 목적을 적어주세요.',
+    'planning.constraintsPlaceholder':
+      '코드 규칙, 아키텍처 제약, 검증 요구사항을 적어주세요.',
     'planning.preview': 'skills.md 미리보기',
     'planning.autosaved': '로컬 자동 저장됨',
     'planning.checks': '어시스턴트 검사',
     'planning.checkPurpose': '목적이 있으며 프로젝트에 맞게 작성됨',
     'planning.checkConstraints': '제약 조건이 NestJS 생성 범위를 정의함',
     'planning.checkCompile': 'NestJS 컴파일/테스트 제약이 명확함',
-    'planning.scaffoldPurpose': '검토된 Semraz 스펙에서 안정적인 NestJS 백엔드를 빌드합니다.',
+    'planning.scaffoldPurpose':
+      '검토된 Semraz 스펙에서 안정적인 NestJS 백엔드를 빌드합니다.',
     'planning.scaffoldConstraints':
       '- NestJS 모듈, 컨트롤러, 서비스, DTO, 테스트 생성\n- 테스트 생성 전에 컴파일\n- 재생성 시 사용자 소유 로직 블록 보존',
     'skills.purpose': '목적',
@@ -591,7 +633,8 @@ Generate a reliable backend from a reviewed Semraz spec.
     'skills.language': '언어',
     'skills.database': '데이터베이스',
     'skills.verification': '검증',
-    'skills.verificationValue': '생성된 코드는 테스트 생성 전에 컴파일되어야 합니다',
+    'skills.verificationValue':
+      '생성된 코드는 테스트 생성 전에 컴파일되어야 합니다',
     'erd.addEntity': '엔티티 추가',
     'erd.entityPlaceholder': '엔티티 이름',
     'erd.columnPlaceholder': '컬럼 이름',
@@ -719,8 +762,10 @@ Generate a reliable backend from a reviewed Semraz spec.
     'generate.progress.recordCompleted': '완료된 작업 기록 중',
     'generate.progress.recordFailed': '실패한 작업 기록 중',
     'generate.progress.runFinalBuild': '최종 NestJS 앱 빌드 실행 중',
-    'generate.progress.runFinalSmoke': '최종 HTTP 및 Swagger 스모크 검사 실행 중',
-    'generate.progress.validateFinalContracts': '최종 애플리케이션 계약 검증 중',
+    'generate.progress.runFinalSmoke':
+      '최종 HTTP 및 Swagger 스모크 검사 실행 중',
+    'generate.progress.validateFinalContracts':
+      '최종 애플리케이션 계약 검증 중',
     'generate.progress.repairFinalBuild': '최종 빌드 오류 복구 중',
     'generate.progress.restoreUserFiles': '사용자 작성 파일 복원 중',
     'generate.progress.packageArtifact': '생성된 아티팩트 요약 수집 중',
@@ -743,7 +788,8 @@ Generate a reliable backend from a reviewed Semraz spec.
     'test.passing': '통과',
     'test.failing': '실패',
     'test.coverage': '커버리지',
-    'test.ready': '{framework} 백엔드를 내보내기, Git 푸시, 배포할 준비가 되었습니다.',
+    'test.ready':
+      '{framework} 백엔드를 내보내기, Git 푸시, 배포할 준비가 되었습니다.',
     'test.agentTitle': '테스트 에이전트',
     'test.notReady': '먼저 생성 단계에서 검증된 NestJS 앱을 만들어주세요.',
     'test.runAgent': '테스트 생성 및 실행',
@@ -783,21 +829,21 @@ Generate a reliable backend from a reviewed Semraz spec.
     'footer.rights': '© {year} 김원정. All rights reserved.',
     'footer.madeWith': '세상의 모든 개발자들을 위해 만들었습니다.',
   },
-} as const
+} as const;
 
-type TranslationKey = keyof (typeof translations)['en']
+type TranslationKey = keyof (typeof translations)['en'];
 
-const defaultLanguage: Language = 'en'
+const defaultLanguage: Language = 'en';
 
 const I18nContext = createContext<{
-  language: Language
-  setLanguage: (language: Language) => void
-  t: (key: TranslationKey, values?: TranslationValues) => string
+  language: Language;
+  setLanguage: (language: Language) => void;
+  t: (key: TranslationKey, values?: TranslationValues) => string;
 }>({
   language: defaultLanguage,
   setLanguage: () => undefined,
   t: (key) => translations[defaultLanguage][key],
-})
+});
 
 const flowSteps = [
   'flow.project',
@@ -806,70 +852,75 @@ const flowSteps = [
   'flow.operations',
   'flow.generate',
   'flow.test',
-] as const satisfies TranslationKey[]
+] as const satisfies TranslationKey[];
 
 function interpolate(template: string, values?: TranslationValues) {
   if (!values) {
-    return template
+    return template;
   }
 
   return template.replace(/\{(\w+)\}/g, (match, key) =>
     values[key] === undefined ? match : String(values[key]),
-  )
+  );
 }
 
 function getInitialLanguage(): Language {
   if (typeof window === 'undefined') {
-    return defaultLanguage
+    return defaultLanguage;
   }
 
-  const savedLanguage = window.localStorage.getItem('semraz-language')
+  const savedLanguage = window.localStorage.getItem('semraz-language');
 
-  return savedLanguage === 'ko' || savedLanguage === 'en' ? savedLanguage : defaultLanguage
+  return savedLanguage === 'ko' || savedLanguage === 'en'
+    ? savedLanguage
+    : defaultLanguage;
 }
 
 function hasSavedLanguagePreference() {
   if (typeof window === 'undefined') {
-    return false
+    return false;
   }
 
-  const savedLanguage = window.localStorage.getItem('semraz-language')
+  const savedLanguage = window.localStorage.getItem('semraz-language');
 
-  return savedLanguage === 'ko' || savedLanguage === 'en'
+  return savedLanguage === 'ko' || savedLanguage === 'en';
 }
 
 function getSavedToken(storageKey: string) {
   if (typeof window === 'undefined') {
-    return null
+    return null;
   }
 
-  return window.localStorage.getItem(storageKey)
+  return window.localStorage.getItem(storageKey);
 }
 
 function useI18n() {
-  return useContext(I18nContext)
+  return useContext(I18nContext);
 }
 
 function LanguageSwitcher() {
-  const { language, setLanguage, t } = useI18n()
+  const { language, setLanguage, t } = useI18n();
 
   return (
     <label className="language-switcher">
       <span>{t('language.label')}</span>
-      <select value={language} onChange={(event) => setLanguage(event.target.value as Language)}>
+      <select
+        value={language}
+        onChange={(event) => setLanguage(event.target.value as Language)}
+      >
         <option value="en">{t('language.en')}</option>
         <option value="ko">{t('language.ko')}</option>
       </select>
     </label>
-  )
+  );
 }
 
 function SiteFooter({ variant }: { variant: 'auth' | 'app' }) {
-  const { t } = useI18n()
-  const year = new Date().getFullYear()
+  const { t } = useI18n();
+  const year = new Date().getFullYear();
   const columns: {
-    heading: TranslationKey
-    links: { key: TranslationKey; to: string }[]
+    heading: TranslationKey;
+    links: { key: TranslationKey; to: string }[];
   }[] = [
     {
       heading: 'footer.colProduct',
@@ -891,7 +942,7 @@ function SiteFooter({ variant }: { variant: 'auth' | 'app' }) {
         { key: 'footer.security', to: '/security' },
       ],
     },
-  ]
+  ];
 
   return (
     <footer className={`site-footer site-footer--${variant}`}>
@@ -908,7 +959,9 @@ function SiteFooter({ variant }: { variant: 'auth' | 'app' }) {
         <nav className="site-footer-cols" aria-label="Footer">
           {columns.map((column) => (
             <div className="site-footer-col" key={column.heading}>
-              <span className="site-footer-col-heading">{t(column.heading)}</span>
+              <span className="site-footer-col-heading">
+                {t(column.heading)}
+              </span>
               {column.links.map((link) => (
                 <Link className="site-footer-link" to={link.to} key={link.key}>
                   {t(link.key)}
@@ -923,35 +976,35 @@ function SiteFooter({ variant }: { variant: 'auth' | 'app' }) {
         <span className="site-footer-note">{t('footer.madeWith')}</span>
       </div>
     </footer>
-  )
+  );
 }
 
-type ContentSection = { heading: string; body: string[] }
-type ContentCard = { eyebrow?: string; title: string; body: string }
-type ContentMetric = { value: string; label: string }
+type ContentSection = { heading: string; body: string[] };
+type ContentCard = { eyebrow?: string; title: string; body: string };
+type ContentMetric = { value: string; label: string };
 type ContentDoc = {
-  eyebrow: string
-  title: string
-  intro: string
-  updated?: string
-  sections: ContentSection[]
+  eyebrow: string;
+  title: string;
+  intro: string;
+  updated?: string;
+  sections: ContentSection[];
   banner?: {
-    kicker: string
-    title: string
-    body: string
-    primary: string
-    secondary: string
-  }
+    kicker: string;
+    title: string;
+    body: string;
+    primary: string;
+    secondary: string;
+  };
   proverb?: {
-    quote: string
-    title: string
-    body: string
-  }
-  highlights?: ContentCard[]
-  workflow?: ContentCard[]
-  agents?: ContentCard[]
-  metrics?: ContentMetric[]
-}
+    quote: string;
+    title: string;
+    body: string;
+  };
+  highlights?: ContentCard[];
+  workflow?: ContentCard[];
+  agents?: ContentCard[];
+  metrics?: ContentMetric[];
+};
 
 const contentPageSlugs = [
   'overview',
@@ -961,8 +1014,8 @@ const contentPageSlugs = [
   'privacy',
   'terms',
   'security',
-] as const
-type ContentPageSlug = (typeof contentPageSlugs)[number]
+] as const;
+type ContentPageSlug = (typeof contentPageSlugs)[number];
 
 const contentPages: Record<ContentPageSlug, Record<Language, ContentDoc>> = {
   overview: {
@@ -973,14 +1026,16 @@ const contentPages: Record<ContentPageSlug, Record<Language, ContentDoc>> = {
         'Semraz turns a plain-language backend idea into a measured product specification, an interactive data model, API operations, generated code, and a verification pass you can trust before you download the app.',
       banner: {
         kicker: 'AI-native backend workspace',
-        title: 'From first idea to tested application, without losing the blueprint.',
+        title:
+          'From first idea to tested application, without losing the blueprint.',
         body: 'Semraz keeps the project brief, planning rules, ERD, endpoint specs, generated backend application, and automated test result in one workspace so every generation run has a source of truth.',
         primary: 'Project -> Planning -> ERD -> Operations -> Generate -> Test',
         secondary: 'Workspace saved, code downloadable, tests repeatable',
       },
       proverb: {
         quote: 'Семь раз отмерь, один отрежь.',
-        title: 'The name comes from a Russian proverb: measure seven times, cut once.',
+        title:
+          'The name comes from a Russian proverb: measure seven times, cut once.',
         body: 'The saying is a warning against irreversible work done too early. Semraz applies that idea to backend development: measure the intent, constraints, data model, and endpoints first; cut code only when the shape is clear.',
       },
       metrics: [
@@ -1077,14 +1132,16 @@ const contentPages: Record<ContentPageSlug, Record<Language, ContentDoc>> = {
         'Semraz는 자연어로 시작한 백엔드 아이디어를 프로젝트 요약, 계획, ERD, API 명세, 생성된 코드, 테스트 검증까지 이어지는 하나의 제품 설계 흐름으로 바꿔줍니다.',
       banner: {
         kicker: 'AI 기반 앱 생성 워크스페이스',
-        title: '아이디어부터 테스트된 애플리케이션까지, 설계 기준을 잃지 않고 한 번에.',
+        title:
+          '아이디어부터 테스트된 애플리케이션까지, 설계 기준을 잃지 않고 한 번에.',
         body: '프로젝트 개요, 계획 규칙, ERD, 엔드포인트 명세, 생성된 백엔드 애플리케이션, 자동 테스트 결과를 하나의 워크스페이스에 묶어 매번 같은 기준에서 생성하고 검토할 수 있습니다.',
         primary: '프로젝트 -> 계획 -> ERD -> 작업 -> 생성 -> 테스트',
         secondary: '워크스페이스 저장, 앱 다운로드, 테스트 반복 검증',
       },
       proverb: {
         quote: 'Семь раз отмерь, один отрежь.',
-        title: 'Semraz라는 이름은 러시아 속담 “일곱 번 재고, 한 번 자르라”에서 출발했습니다.',
+        title:
+          'Semraz라는 이름은 러시아 속담 “일곱 번 재고, 한 번 자르라”에서 출발했습니다.',
         body: '이 속담은 되돌리기 어려운 일을 하기 전에 충분히 검토하라는 뜻입니다. Semraz는 이 태도를 백엔드 개발에 적용합니다. 먼저 목적, 제약, 데이터 모델, 엔드포인트를 일곱 번 재고, 형태가 분명해졌을 때 코드를 한 번에 생성합니다.',
       },
       metrics: [
@@ -1179,7 +1236,8 @@ const contentPages: Record<ContentPageSlug, Record<Language, ContentDoc>> = {
     en: {
       eyebrow: 'Resources',
       title: 'Documentation',
-      intro: 'Everything you need to go from a new workspace to generated, tested code.',
+      intro:
+        'Everything you need to go from a new workspace to generated, tested code.',
       sections: [
         {
           heading: 'Getting started',
@@ -1206,7 +1264,8 @@ const contentPages: Record<ContentPageSlug, Record<Language, ContentDoc>> = {
     ko: {
       eyebrow: '리소스',
       title: '문서',
-      intro: '새 워크스페이스에서 생성·테스트된 코드까지 나아가는 데 필요한 모든 것.',
+      intro:
+        '새 워크스페이스에서 생성·테스트된 코드까지 나아가는 데 필요한 모든 것.',
       sections: [
         {
           heading: '시작하기',
@@ -1264,7 +1323,8 @@ const contentPages: Record<ContentPageSlug, Record<Language, ContentDoc>> = {
           ],
         },
         {
-          heading: '4. Choose operations like product behavior, not boilerplate',
+          heading:
+            '4. Choose operations like product behavior, not boilerplate',
           body: [
             'Enable only the endpoints your product actually needs. A small set of well-scoped operations is easier to review, test, secure, and regenerate than a full CRUD surface that nobody uses.',
             'For each operation, check the method, path, request fields, response fields, and description. The description should say what the endpoint does in product terms, not just “handles request”.',
@@ -1370,7 +1430,9 @@ const contentPages: Record<ContentPageSlug, Record<Language, ContentDoc>> = {
         },
         {
           heading: 'v0.1 — First preview',
-          body: ['Initial release: describe a backend and generate structured code from it.'],
+          body: [
+            'Initial release: describe a backend and generate structured code from it.',
+          ],
         },
       ],
     },
@@ -1426,7 +1488,9 @@ const contentPages: Record<ContentPageSlug, Record<Language, ContentDoc>> = {
         },
         {
           heading: 'Contact',
-          body: ['Questions about privacy can be sent to ruffmadman@kakao.com.'],
+          body: [
+            'Questions about privacy can be sent to ruffmadman@kakao.com.',
+          ],
         },
       ],
     },
@@ -1514,7 +1578,9 @@ const contentPages: Record<ContentPageSlug, Record<Language, ContentDoc>> = {
         },
         {
           heading: '계정',
-          body: ['계정에서 이루어지는 활동과 인증 정보의 보안 유지는 이용자의 책임입니다.'],
+          body: [
+            '계정에서 이루어지는 활동과 인증 정보의 보안 유지는 이용자의 책임입니다.',
+          ],
         },
         {
           heading: '변경',
@@ -1577,12 +1643,12 @@ const contentPages: Record<ContentPageSlug, Record<Language, ContentDoc>> = {
       ],
     },
   },
-}
+};
 
 function ContentPage({ slug }: { slug: ContentPageSlug }) {
-  const { language, t } = useI18n()
-  const navigate = useNavigate()
-  const doc = contentPages[slug][language]
+  const { language, t } = useI18n();
+  const navigate = useNavigate();
+  const doc = contentPages[slug][language];
 
   return (
     <div className="content-layout">
@@ -1606,7 +1672,9 @@ function ContentPage({ slug }: { slug: ContentPageSlug }) {
           <p className="eyebrow">{doc.eyebrow}</p>
           <h1>{doc.title}</h1>
           <p className="content-intro">{doc.intro}</p>
-          {doc.updated ? <p className="content-updated">{doc.updated}</p> : null}
+          {doc.updated ? (
+            <p className="content-updated">{doc.updated}</p>
+          ) : null}
           {doc.banner ? (
             <section className="overview-banner">
               <div className="overview-banner-copy">
@@ -1673,7 +1741,7 @@ function ContentPage({ slug }: { slug: ContentPageSlug }) {
       </main>
       <SiteFooter variant="auth" />
     </div>
-  )
+  );
 }
 
 function buildSkillsMarkdown(
@@ -1692,7 +1760,7 @@ ${draftProject.planning.constraints}
 - ${t('skills.framework')}: NestJS
 - ${t('skills.language')}: TypeScript
 - ${t('skills.database')}: ${draftProject.database}
-- ${t('skills.verification')}: ${t('skills.verificationValue')}`
+- ${t('skills.verification')}: ${t('skills.verificationValue')}`;
 }
 
 function createDefaultDraftProject(_language: Language): DraftProject {
@@ -1705,25 +1773,28 @@ function createDefaultDraftProject(_language: Language): DraftProject {
       purpose: '',
       constraints: '',
     },
-  }
+  };
 }
 
 function isDefaultDraftProject(draftProject: DraftProject) {
   const legacyDrafts: DraftProject[] = [
     {
       name: '커머스 백엔드',
-      description: '주문, 결제, 배송과 회원 서비스 API를 제공하는 백엔드입니다.',
+      description:
+        '주문, 결제, 배송과 회원 서비스 API를 제공하는 백엔드입니다.',
       framework: 'NestJS',
       database: 'PostgreSQL',
       planning: {
-        purpose: '주문, 결제, 배송, 회원 기능을 안정적으로 처리하는 커머스 백엔드를 구축합니다.',
+        purpose:
+          '주문, 결제, 배송, 회원 기능을 안정적으로 처리하는 커머스 백엔드를 구축합니다.',
         constraints:
           '- NestJS 모듈/컨트롤러/서비스 구조를 사용합니다\n- 요청 검증을 위한 DTO 클래스를 작성합니다\n- 컴파일 가능한 TypeScript 코드를 생성합니다\n- 프로젝트 스펙을 단일 기준으로 유지합니다',
       },
     },
     {
       name: 'Commerce Backend',
-      description: 'Orders, payments, shipments, and member-facing service APIs.',
+      description:
+        'Orders, payments, shipments, and member-facing service APIs.',
       framework: 'NestJS',
       database: 'PostgreSQL',
       planning: {
@@ -1733,8 +1804,11 @@ function isDefaultDraftProject(draftProject: DraftProject) {
           '- Use NestJS module/controller/service structure\n- Use DTO classes for request validation\n- Generate compile-safe TypeScript\n- Keep the project spec as the source of truth',
       },
     },
-  ]
-  const defaultDrafts = [createDefaultDraftProject(defaultLanguage), ...legacyDrafts]
+  ];
+  const defaultDrafts = [
+    createDefaultDraftProject(defaultLanguage),
+    ...legacyDrafts,
+  ];
 
   return defaultDrafts.some(
     (defaultDraft) =>
@@ -1744,7 +1818,7 @@ function isDefaultDraftProject(draftProject: DraftProject) {
       draftProject.database === defaultDraft.database &&
       draftProject.planning.purpose === defaultDraft.planning.purpose &&
       draftProject.planning.constraints === defaultDraft.planning.constraints,
-  )
+  );
 }
 
 function MagicWandIcon() {
@@ -1762,8 +1836,18 @@ function MagicWandIcon() {
         strokeLinejoin="round"
         strokeWidth="1.8"
       />
-      <path d="m5 19 8.6-8.6" stroke="currentColor" strokeLinecap="round" strokeWidth="2.2" />
-      <path d="m11.8 8.8 3.4 3.4" stroke="currentColor" strokeLinecap="round" strokeWidth="2.2" />
+      <path
+        d="m5 19 8.6-8.6"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="2.2"
+      />
+      <path
+        d="m11.8 8.8 3.4 3.4"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="2.2"
+      />
       <path
         d="m5.2 5.4.8-1.6.8 1.6 1.6.8-1.6.8-.8 1.6-.8-1.6-1.6-.8 1.6-.8Z"
         stroke="currentColor"
@@ -1771,7 +1855,7 @@ function MagicWandIcon() {
         strokeWidth="1.6"
       />
     </svg>
-  )
+  );
 }
 
 function LogoutIcon() {
@@ -1796,252 +1880,292 @@ function LogoutIcon() {
         strokeLinejoin="round"
         strokeWidth="2"
       />
-      <path d="M17 12H9" stroke="currentColor" strokeLinecap="round" strokeWidth="2" />
+      <path
+        d="M17 12H9"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="2"
+      />
     </svg>
-  )
+  );
 }
 
 function MenuIcon() {
   return (
-    <svg aria-hidden="true" className="menu-icon" fill="none" focusable="false" viewBox="0 0 24 24">
-      <path d="M5 7h14" stroke="currentColor" strokeLinecap="round" strokeWidth="2" />
-      <path d="M5 12h14" stroke="currentColor" strokeLinecap="round" strokeWidth="2" />
-      <path d="M5 17h14" stroke="currentColor" strokeLinecap="round" strokeWidth="2" />
+    <svg
+      aria-hidden="true"
+      className="menu-icon"
+      fill="none"
+      focusable="false"
+      viewBox="0 0 24 24"
+    >
+      <path
+        d="M5 7h14"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="2"
+      />
+      <path
+        d="M5 12h14"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="2"
+      />
+      <path
+        d="M5 17h14"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="2"
+      />
     </svg>
-  )
+  );
 }
 
 function App() {
-  const navigate = useNavigate()
-  const [language, setLanguageState] = useState<Language>(getInitialLanguage)
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [signupName, setSignupName] = useState('')
-  const [signupEmail, setSignupEmail] = useState('')
-  const [signupPassword, setSignupPassword] = useState('')
-  const [signupPasswordConfirm, setSignupPasswordConfirm] = useState('')
-  const [token, setToken] = useState<string | null>(() => getSavedToken(accessTokenStorageKey))
+  const navigate = useNavigate();
+  const [language, setLanguageState] = useState<Language>(getInitialLanguage);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [signupName, setSignupName] = useState('');
+  const [signupEmail, setSignupEmail] = useState('');
+  const [signupPassword, setSignupPassword] = useState('');
+  const [signupPasswordConfirm, setSignupPasswordConfirm] = useState('');
+  const [token, setToken] = useState<string | null>(() =>
+    getSavedToken(accessTokenStorageKey),
+  );
   const [refreshToken, setRefreshToken] = useState<string | null>(() =>
     getSavedToken(refreshTokenStorageKey),
-  )
-  const [user, setUser] = useState<User | null>(null)
-  const [projects, setProjects] = useState<Project[]>([])
-  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
-  const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [isLoading, setIsLoading] = useState(false)
-  const [flowStep, setFlowStep] = useState(0)
+  );
+  const [user, setUser] = useState<User | null>(null);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
+    null,
+  );
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(
+    null,
+  );
+  const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [flowStep, setFlowStep] = useState(0);
   const [draftProject, setDraftProject] = useState<DraftProject>(() =>
     createDefaultDraftProject(language),
-  )
+  );
 
   const selectedProject = useMemo(
-    () => projects.find((project) => project.id === selectedProjectId) ?? projects[0],
+    () =>
+      projects.find((project) => project.id === selectedProjectId) ??
+      projects[0],
     [projects, selectedProjectId],
-  )
+  );
   const activeWorkspace = useMemo(
     () => projects.find((project) => project.id === activeWorkspaceId),
     [activeWorkspaceId, projects],
-  )
+  );
   const t = useMemo(
     () => (key: TranslationKey, values?: TranslationValues) =>
       interpolate(translations[language][key], values),
     [language],
-  )
+  );
   const i18nValue = useMemo(
     () => ({
       language,
       setLanguage: (nextLanguage: Language) => {
-        setLanguageState(nextLanguage)
-        window.localStorage.setItem('semraz-language', nextLanguage)
+        setLanguageState(nextLanguage);
+        window.localStorage.setItem('semraz-language', nextLanguage);
       },
       t,
     }),
     [language, t],
-  )
+  );
 
   useEffect(() => {
-    document.documentElement.lang = language
-  }, [language])
+    document.documentElement.lang = language;
+  }, [language]);
 
   useEffect(() => {
     if (hasSavedLanguagePreference()) {
-      return
+      return;
     }
 
-    let isActive = true
+    let isActive = true;
 
     void fetch(`${apiBaseUrl}/api/locale`)
       .then(async (response) => {
         if (!response.ok) {
-          throw new Error('Unable to determine locale')
+          throw new Error('Unable to determine locale');
         }
 
-        return (await response.json()) as { locale?: unknown }
+        return (await response.json()) as { locale?: unknown };
       })
       .then(({ locale }) => {
-        if (isActive && !hasSavedLanguagePreference() && (locale === 'ko' || locale === 'en')) {
-          setLanguageState(locale)
+        if (
+          isActive &&
+          !hasSavedLanguagePreference() &&
+          (locale === 'ko' || locale === 'en')
+        ) {
+          setLanguageState(locale);
         }
       })
       .catch(() => {
         // English remains the fallback when a location cannot be determined.
-      })
+      });
 
     return () => {
-      isActive = false
-    }
-  }, [])
+      isActive = false;
+    };
+  }, []);
 
   useEffect(() => {
     setDraftProject((currentDraft) => {
-      const emptyDraft = createDefaultDraftProject(language)
+      const emptyDraft = createDefaultDraftProject(language);
       const isAlreadyEmpty =
         currentDraft.name === emptyDraft.name &&
         currentDraft.description === emptyDraft.description &&
         currentDraft.framework === emptyDraft.framework &&
         currentDraft.database === emptyDraft.database &&
         currentDraft.planning.purpose === emptyDraft.planning.purpose &&
-        currentDraft.planning.constraints === emptyDraft.planning.constraints
+        currentDraft.planning.constraints === emptyDraft.planning.constraints;
 
       if (!isDefaultDraftProject(currentDraft) || isAlreadyEmpty) {
-        return currentDraft
+        return currentDraft;
       }
 
-      return emptyDraft
-    })
-  }, [draftProject, language])
+      return emptyDraft;
+    });
+  }, [draftProject, language]);
 
   useEffect(() => {
     if (!token || user) {
-      return
+      return;
     }
 
-    let isActive = true
+    let isActive = true;
 
     async function restoreSession() {
       try {
-        const meResponse = await authFetch(`${apiBaseUrl}/api/auth/me`)
+        const meResponse = await authFetch(`${apiBaseUrl}/api/auth/me`);
 
         if (!meResponse.ok) {
-          throw new Error(t('error.loginFailed'))
+          throw new Error(t('error.loginFailed'));
         }
 
-        const restoredUser = (await meResponse.json()) as User
-        const projectsResponse = await authFetch(`${apiBaseUrl}/api/projects`)
+        const restoredUser = (await meResponse.json()) as User;
+        const projectsResponse = await authFetch(`${apiBaseUrl}/api/projects`);
 
         if (!projectsResponse.ok) {
-          throw new Error(t('error.projectsFailed'))
+          throw new Error(t('error.projectsFailed'));
         }
 
-        const projectData = (await projectsResponse.json()) as Project[]
+        const projectData = (await projectsResponse.json()) as Project[];
 
         if (!isActive) {
-          return
+          return;
         }
 
-        setUser(restoredUser)
-        setProjects(projectData)
-        setSelectedProjectId(projectData[0]?.id ?? null)
+        setUser(restoredUser);
+        setProjects(projectData);
+        setSelectedProjectId(projectData[0]?.id ?? null);
       } catch {
         if (isActive) {
-          clearAuth()
+          clearAuth();
         }
       }
     }
 
-    void restoreSession()
+    void restoreSession();
 
     return () => {
-      isActive = false
-    }
-  }, [token, user])
+      isActive = false;
+    };
+  }, [token, user]);
 
   function persistAuth(authData: AuthResponse) {
-    window.localStorage.setItem(accessTokenStorageKey, authData.accessToken)
-    window.localStorage.setItem(refreshTokenStorageKey, authData.refreshToken)
-    setToken(authData.accessToken)
-    setRefreshToken(authData.refreshToken)
-    setUser(authData.user)
+    window.localStorage.setItem(accessTokenStorageKey, authData.accessToken);
+    window.localStorage.setItem(refreshTokenStorageKey, authData.refreshToken);
+    setToken(authData.accessToken);
+    setRefreshToken(authData.refreshToken);
+    setUser(authData.user);
   }
 
   function clearAuth() {
-    window.localStorage.removeItem(accessTokenStorageKey)
-    window.localStorage.removeItem(refreshTokenStorageKey)
-    setToken(null)
-    setRefreshToken(null)
-    setUser(null)
+    window.localStorage.removeItem(accessTokenStorageKey);
+    window.localStorage.removeItem(refreshTokenStorageKey);
+    setToken(null);
+    setRefreshToken(null);
+    setUser(null);
   }
 
   async function refreshAuthToken() {
     if (!refreshToken) {
-      throw new Error(t('error.loginFailed'))
+      throw new Error(t('error.loginFailed'));
     }
 
     const refreshResponse = await fetch(`${apiBaseUrl}/api/auth/refresh`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ refreshToken }),
-    })
+    });
 
     if (!refreshResponse.ok) {
-      throw new Error(t('error.loginFailed'))
+      throw new Error(t('error.loginFailed'));
     }
 
-    const authData = (await refreshResponse.json()) as AuthResponse
-    persistAuth(authData)
+    const authData = (await refreshResponse.json()) as AuthResponse;
+    persistAuth(authData);
 
-    return authData.accessToken
+    return authData.accessToken;
   }
 
   async function authFetch(input: RequestInfo | URL, init: RequestInit = {}) {
     const requestWithToken = (nextToken: string | null) => {
-      const headers = new Headers(init.headers)
+      const headers = new Headers(init.headers);
 
       if (nextToken) {
-        headers.set('Authorization', `Bearer ${nextToken}`)
+        headers.set('Authorization', `Bearer ${nextToken}`);
       }
 
-      return fetch(input, { ...init, headers })
-    }
+      return fetch(input, { ...init, headers });
+    };
 
-    let response = await requestWithToken(token)
+    let response = await requestWithToken(token);
 
     if (response.status === 401 && refreshToken) {
       try {
-        response = await requestWithToken(await refreshAuthToken())
+        response = await requestWithToken(await refreshAuthToken());
       } catch {
-        clearAuth()
+        clearAuth();
       }
     }
 
-    return response
+    return response;
   }
 
   async function readApiError(response: Response, fallback: string) {
     try {
       const payload = (await response.json()) as {
-        message?: string | string[]
-      }
-      const message = Array.isArray(payload.message) ? payload.message.join(' ') : payload.message
+        message?: string | string[];
+      };
+      const message = Array.isArray(payload.message)
+        ? payload.message.join(' ')
+        : payload.message;
 
-      return localizeApiError(message ?? fallback, fallback)
+      return localizeApiError(message ?? fallback, fallback);
     } catch {
-      return fallback
+      return fallback;
     }
   }
 
   function localizeApiError(message: string, fallback: string) {
     if (message.includes('Email is already registered')) {
-      return t('error.emailTaken')
+      return t('error.emailTaken');
     }
 
     if (message.includes('one account every 3 days')) {
-      return t('error.signupRateLimited')
+      return t('error.signupRateLimited');
     }
 
     if (message.includes('valid email')) {
-      return t('error.emailInvalid')
+      return t('error.emailInvalid');
     }
 
     if (
@@ -2049,16 +2173,16 @@ function App() {
       message.includes('Password cannot') ||
       message.includes('Password is too common')
     ) {
-      return t('error.passwordWeak')
+      return t('error.passwordWeak');
     }
 
-    return fallback
+    return fallback;
   }
 
   function isStrongSignupPassword(candidatePassword: string) {
-    const normalizedPassword = candidatePassword.toLowerCase()
-    const emailLocalPart = signupEmail.trim().toLowerCase().split('@')[0] ?? ''
-    const normalizedName = signupName.trim().toLowerCase()
+    const normalizedPassword = candidatePassword.toLowerCase();
+    const emailLocalPart = signupEmail.trim().toLowerCase().split('@')[0] ?? '';
+    const normalizedName = signupName.trim().toLowerCase();
     const commonPasswords = new Set([
       'password',
       'password1',
@@ -2067,7 +2191,7 @@ function App() {
       'qwerty123',
       'semraz',
       'admin123',
-    ])
+    ]);
 
     return (
       candidatePassword.length >= 10 &&
@@ -2076,63 +2200,73 @@ function App() {
       /\d/.test(candidatePassword) &&
       /[^A-Za-z0-9]/.test(candidatePassword) &&
       !commonPasswords.has(normalizedPassword) &&
-      !(emailLocalPart.length >= 3 && normalizedPassword.includes(emailLocalPart)) &&
-      !(normalizedName.length >= 3 && normalizedPassword.includes(normalizedName))
-    )
+      !(
+        emailLocalPart.length >= 3 &&
+        normalizedPassword.includes(emailLocalPart)
+      ) &&
+      !(
+        normalizedName.length >= 3 &&
+        normalizedPassword.includes(normalizedName)
+      )
+    );
   }
 
   async function handleLogin(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    setIsLoading(true)
-    setError(null)
+    event.preventDefault();
+    setIsLoading(true);
+    setError(null);
 
     try {
       const loginResponse = await fetch(`${apiBaseUrl}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
-      })
+      });
 
       if (!loginResponse.ok) {
-        throw new Error(t('error.loginFailed'))
+        throw new Error(t('error.loginFailed'));
       }
 
-      const loginData = (await loginResponse.json()) as AuthResponse
+      const loginData = (await loginResponse.json()) as AuthResponse;
       const projectsResponse = await fetch(`${apiBaseUrl}/api/projects`, {
         headers: { Authorization: `Bearer ${loginData.accessToken}` },
-      })
+      });
 
       if (!projectsResponse.ok) {
-        throw new Error(t('error.projectsFailed'))
+        throw new Error(t('error.projectsFailed'));
       }
 
-      const projectData = (await projectsResponse.json()) as Project[]
-      persistAuth(loginData)
-      setProjects(projectData)
-      setSelectedProjectId(projectData[0]?.id ?? null)
-      navigate('/')
+      const projectData = (await projectsResponse.json()) as Project[];
+      persistAuth(loginData);
+      setProjects(projectData);
+      setSelectedProjectId(projectData[0]?.id ?? null);
+      navigate('/');
     } catch (loginError) {
-      setError(loginError instanceof Error ? loginError.message : t('error.unexpectedLogin'))
+      setError(
+        loginError instanceof Error
+          ? loginError.message
+          : t('error.unexpectedLogin'),
+      );
     } finally {
-      setIsLoading(false)
+      setIsLoading(false);
     }
   }
 
   async function handleSignup(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    setIsLoading(true)
-    setError(null)
+    event.preventDefault();
+    setIsLoading(true);
+    setError(null);
 
     if (signupPassword !== signupPasswordConfirm) {
-      setError(t('error.passwordMismatch'))
-      setIsLoading(false)
-      return
+      setError(t('error.passwordMismatch'));
+      setIsLoading(false);
+      return;
     }
 
     if (!isStrongSignupPassword(signupPassword)) {
-      setError(t('error.passwordWeak'))
-      setIsLoading(false)
-      return
+      setError(t('error.passwordWeak'));
+      setIsLoading(false);
+      return;
     }
 
     try {
@@ -2141,18 +2275,23 @@ function App() {
         {
           headers: { 'Accept-Language': language },
         },
-      )
+      );
 
       if (!emailAvailabilityResponse.ok) {
-        throw new Error(await readApiError(emailAvailabilityResponse, t('error.signupFailed')))
+        throw new Error(
+          await readApiError(
+            emailAvailabilityResponse,
+            t('error.signupFailed'),
+          ),
+        );
       }
 
       const emailAvailability = (await emailAvailabilityResponse.json()) as {
-        available: boolean
-      }
+        available: boolean;
+      };
 
       if (!emailAvailability.available) {
-        throw new Error(t('error.emailTaken'))
+        throw new Error(t('error.emailTaken'));
       }
 
       const signupResponse = await fetch(`${apiBaseUrl}/api/auth/signup`, {
@@ -2166,44 +2305,50 @@ function App() {
           email: signupEmail,
           password: signupPassword,
         }),
-      })
+      });
 
       if (!signupResponse.ok) {
-        throw new Error(await readApiError(signupResponse, t('error.signupFailed')))
+        throw new Error(
+          await readApiError(signupResponse, t('error.signupFailed')),
+        );
       }
 
-      const signupData = (await signupResponse.json()) as AuthResponse
+      const signupData = (await signupResponse.json()) as AuthResponse;
       const projectsResponse = await fetch(`${apiBaseUrl}/api/projects`, {
         headers: { Authorization: `Bearer ${signupData.accessToken}` },
-      })
+      });
 
       if (!projectsResponse.ok) {
-        throw new Error(t('error.projectsFailed'))
+        throw new Error(t('error.projectsFailed'));
       }
 
-      const projectData = (await projectsResponse.json()) as Project[]
-      persistAuth(signupData)
-      setProjects(projectData)
-      setSelectedProjectId(projectData[0]?.id ?? null)
-      navigate('/')
+      const projectData = (await projectsResponse.json()) as Project[];
+      persistAuth(signupData);
+      setProjects(projectData);
+      setSelectedProjectId(projectData[0]?.id ?? null);
+      navigate('/');
     } catch (signupError) {
-      setError(signupError instanceof Error ? signupError.message : t('error.unexpectedSignup'))
+      setError(
+        signupError instanceof Error
+          ? signupError.message
+          : t('error.unexpectedSignup'),
+      );
     } finally {
-      setIsLoading(false)
+      setIsLoading(false);
     }
   }
 
   function showSignup() {
-    setError(null)
-    setSignupEmail(email)
-    setSignupPassword('')
-    setSignupPasswordConfirm('')
-    navigate('/signup')
+    setError(null);
+    setSignupEmail(email);
+    setSignupPassword('');
+    setSignupPasswordConfirm('');
+    navigate('/signup');
   }
 
   function showLogin() {
-    setError(null)
-    navigate('/login')
+    setError(null);
+    navigate('/login');
   }
 
   function handleLogout() {
@@ -2211,62 +2356,70 @@ function App() {
       void fetch(`${apiBaseUrl}/api/auth/logout`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
-      })
+      });
     }
 
-    clearAuth()
-    setProjects([])
-    setSelectedProjectId(null)
-    setActiveWorkspaceId(null)
-    navigate('/login')
+    clearAuth();
+    setProjects([]);
+    setSelectedProjectId(null);
+    setActiveWorkspaceId(null);
+    navigate('/login');
   }
 
   function startCreateFlow() {
-    const nextDraftProject = createDefaultDraftProject(language)
+    const nextDraftProject = createDefaultDraftProject(language);
 
-    setDraftProject(nextDraftProject)
-    setFlowStep(0)
-    setActiveWorkspaceId(null)
-    navigate('/new')
+    setDraftProject(nextDraftProject);
+    setFlowStep(0);
+    setActiveWorkspaceId(null);
+    navigate('/new');
   }
 
   function goToWorkspaceHome() {
-    setActiveWorkspaceId(null)
-    navigate('/')
+    setActiveWorkspaceId(null);
+    navigate('/');
   }
 
   function resumeWorkspace(projectId: string) {
-    const workspace = projects.find((project) => project.id === projectId)
+    const workspace = projects.find((project) => project.id === projectId);
 
     if (!workspace) {
-      return
+      return;
     }
 
-    setSelectedProjectId(projectId)
-    setActiveWorkspaceId(projectId)
-    setDraftProject(workspace.draftProject ?? createDefaultDraftProject(language))
-    setFlowStep(workspace.flowStep ?? 0)
-    navigate(`/workspace/${projectId}`)
+    setSelectedProjectId(projectId);
+    setActiveWorkspaceId(projectId);
+    setDraftProject(
+      workspace.draftProject ?? createDefaultDraftProject(language),
+    );
+    setFlowStep(workspace.flowStep ?? 0);
+    navigate(`/workspace/${projectId}`);
   }
 
-  async function saveWorkspaceSnapshot(workspaceId: string, snapshot: WorkspaceSnapshot) {
-    const response = await authFetch(`${apiBaseUrl}/api/projects/${workspaceId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(snapshot),
-    })
+  async function saveWorkspaceSnapshot(
+    workspaceId: string,
+    snapshot: WorkspaceSnapshot,
+  ) {
+    const response = await authFetch(
+      `${apiBaseUrl}/api/projects/${workspaceId}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(snapshot),
+      },
+    );
 
     if (!response.ok) {
-      throw new Error(t('error.workspaceFailed'))
+      throw new Error(t('error.workspaceFailed'));
     }
 
-    const savedWorkspace = (await response.json()) as Project
+    const savedWorkspace = (await response.json()) as Project;
     setProjects((currentProjects) =>
       currentProjects.map((project) =>
         project.id === savedWorkspace.id ? savedWorkspace : project,
       ),
-    )
-    setSelectedProjectId(savedWorkspace.id)
+    );
+    setSelectedProjectId(savedWorkspace.id);
   }
 
   async function createWorkspaceFromSnapshot(snapshot: WorkspaceSnapshot) {
@@ -2274,19 +2427,19 @@ function App() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(snapshot),
-    })
+    });
 
     if (!response.ok) {
-      throw new Error(t('error.workspaceFailed'))
+      throw new Error(t('error.workspaceFailed'));
     }
 
-    const workspace = (await response.json()) as Project
-    setProjects((currentProjects) => [workspace, ...currentProjects])
-    setSelectedProjectId(workspace.id)
-    setActiveWorkspaceId(workspace.id)
-    navigate(`/workspace/${workspace.id}`, { replace: true })
+    const workspace = (await response.json()) as Project;
+    setProjects((currentProjects) => [workspace, ...currentProjects]);
+    setSelectedProjectId(workspace.id);
+    setActiveWorkspaceId(workspace.id);
+    navigate(`/workspace/${workspace.id}`, { replace: true });
 
-    return workspace
+    return workspace;
   }
 
   async function finishCreateFlow(completedProject: CompletedProjectPayload) {
@@ -2299,39 +2452,47 @@ function App() {
         workspacePath: completedProject.workspacePath ?? null,
         nestJsAppPath: completedProject.nestJsAppPath ?? null,
         metrics: completedProject.metrics,
-      })
+      });
     }
 
-    setActiveWorkspaceId(null)
-    navigate('/')
+    setActiveWorkspaceId(null);
+    navigate('/');
   }
 
   async function deleteProject(projectId: string) {
-    const response = await authFetch(`${apiBaseUrl}/api/projects/${projectId}`, {
-      method: 'DELETE',
-    })
+    const response = await authFetch(
+      `${apiBaseUrl}/api/projects/${projectId}`,
+      {
+        method: 'DELETE',
+      },
+    );
 
     if (!response.ok) {
-      setError(t('error.projectsFailed'))
-      return
+      setError(t('error.projectsFailed'));
+      return;
     }
 
     setProjects((currentProjects) => {
-      const nextProjects = currentProjects.filter((project) => project.id !== projectId)
+      const nextProjects = currentProjects.filter(
+        (project) => project.id !== projectId,
+      );
 
       setSelectedProjectId((currentSelectedProjectId) => {
-        if (currentSelectedProjectId && currentSelectedProjectId !== projectId) {
-          return currentSelectedProjectId
+        if (
+          currentSelectedProjectId &&
+          currentSelectedProjectId !== projectId
+        ) {
+          return currentSelectedProjectId;
         }
 
-        return nextProjects[0]?.id ?? null
-      })
+        return nextProjects[0]?.id ?? null;
+      });
 
-      return nextProjects
-    })
+      return nextProjects;
+    });
   }
 
-  const isAuthenticated = Boolean(token && user)
+  const isAuthenticated = Boolean(token && user);
 
   const loginPage = (
     <div className="auth-layout">
@@ -2351,7 +2512,10 @@ function App() {
           <form className="login-form" onSubmit={handleLogin}>
             <label>
               {t('auth.email')}
-              <input value={email} onChange={(event) => setEmail(event.target.value)} />
+              <input
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+              />
             </label>
             <label>
               {t('auth.password')}
@@ -2367,7 +2531,11 @@ function App() {
             </button>
             <div className="auth-form-footer">
               <span>{t('auth.noAccount')}</span>
-              <button className="text-button" type="button" onClick={showSignup}>
+              <button
+                className="text-button"
+                type="button"
+                onClick={showSignup}
+              >
                 {t('auth.signup')}
               </button>
             </div>
@@ -2376,7 +2544,7 @@ function App() {
       </main>
       <SiteFooter variant="auth" />
     </div>
-  )
+  );
 
   const signupPage = (
     <div className="auth-layout">
@@ -2397,11 +2565,17 @@ function App() {
             <h2>{t('auth.signupTitle')}</h2>
             <label>
               {t('auth.name')}
-              <input value={signupName} onChange={(event) => setSignupName(event.target.value)} />
+              <input
+                value={signupName}
+                onChange={(event) => setSignupName(event.target.value)}
+              />
             </label>
             <label>
               {t('auth.email')}
-              <input value={signupEmail} onChange={(event) => setSignupEmail(event.target.value)} />
+              <input
+                value={signupEmail}
+                onChange={(event) => setSignupEmail(event.target.value)}
+              />
             </label>
             <label>
               {t('auth.password')}
@@ -2417,7 +2591,9 @@ function App() {
               <input
                 type="password"
                 value={signupPasswordConfirm}
-                onChange={(event) => setSignupPasswordConfirm(event.target.value)}
+                onChange={(event) =>
+                  setSignupPasswordConfirm(event.target.value)
+                }
               />
             </label>
             <p className="auth-terms-notice">{t('auth.termsNotice')}</p>
@@ -2436,7 +2612,7 @@ function App() {
       </main>
       <SiteFooter variant="auth" />
     </div>
-  )
+  );
 
   const createFlowPage = (
     <CreateFlow
@@ -2453,9 +2629,13 @@ function App() {
       onFinish={finishCreateFlow}
       onGoToStep={setFlowStep}
       onPersist={saveWorkspaceSnapshot}
-      onNext={() => setFlowStep((currentStep) => Math.min(currentStep + 1, flowSteps.length - 1))}
+      onNext={() =>
+        setFlowStep((currentStep) =>
+          Math.min(currentStep + 1, flowSteps.length - 1),
+        )
+      }
     />
-  )
+  );
 
   const dashboardPage = (
     <Dashboard
@@ -2466,12 +2646,15 @@ function App() {
       onResumeProject={resumeWorkspace}
       onSelectProject={setSelectedProjectId}
     />
-  )
+  );
 
   return (
     <I18nContext.Provider value={i18nValue}>
       <Routes>
-        <Route path="/login" element={isAuthenticated ? <Navigate to="/" replace /> : loginPage} />
+        <Route
+          path="/login"
+          element={isAuthenticated ? <Navigate to="/" replace /> : loginPage}
+        />
         <Route
           path="/signup"
           element={isAuthenticated ? <Navigate to="/" replace /> : signupPage}
@@ -2532,13 +2715,22 @@ function App() {
           }
         />
         {contentPageSlugs.map((slug) => (
-          <Route key={slug} path={`/${slug}`} element={<ContentPage slug={slug} />} />
+          <Route
+            key={slug}
+            path={`/${slug}`}
+            element={<ContentPage slug={slug} />}
+          />
         ))}
-        <Route path="*" element={<Navigate to={isAuthenticated ? '/' : '/login'} replace />} />
+        <Route
+          path="*"
+          element={<Navigate to={isAuthenticated ? '/' : '/login'} replace />}
+        />
       </Routes>
-      {isAuthenticated ? <FeedbackWidget language={language} authFetch={authFetch} /> : null}
+      {isAuthenticated ? (
+        <FeedbackWidget language={language} authFetch={authFetch} />
+      ) : null}
     </I18nContext.Provider>
-  )
+  );
 }
 
 function WorkspaceRoute({
@@ -2550,28 +2742,28 @@ function WorkspaceRoute({
   onSetup,
   children,
 }: {
-  user: User
-  projects: Project[]
-  onGoHome: () => void
-  onNewApp: () => void
-  onLogout: () => void
-  onSetup: (projectId: string) => void
-  children: React.ReactNode
+  user: User;
+  projects: Project[];
+  onGoHome: () => void;
+  onNewApp: () => void;
+  onLogout: () => void;
+  onSetup: (projectId: string) => void;
+  children: React.ReactNode;
 }) {
-  const { workspaceId } = useParams<{ workspaceId: string }>()
-  const setupDone = useRef(false)
+  const { workspaceId } = useParams<{ workspaceId: string }>();
+  const setupDone = useRef(false);
 
   useEffect(() => {
-    if (setupDone.current || !workspaceId) return
-    const exists = projects.some((p) => p.id === workspaceId)
+    if (setupDone.current || !workspaceId) return;
+    const exists = projects.some((p) => p.id === workspaceId);
     if (exists) {
-      setupDone.current = true
-      onSetup(workspaceId)
+      setupDone.current = true;
+      onSetup(workspaceId);
     }
-  }, [workspaceId, projects, onSetup])
+  }, [workspaceId, projects, onSetup]);
 
   if (!workspaceId || !projects.some((p) => p.id === workspaceId)) {
-    return <Navigate to="/" replace />
+    return <Navigate to="/" replace />;
   }
 
   return (
@@ -2584,7 +2776,7 @@ function WorkspaceRoute({
     >
       {children}
     </AppShell>
-  )
+  );
 }
 
 function AppShell({
@@ -2595,17 +2787,17 @@ function AppShell({
   onLogout,
   children,
 }: {
-  user: User
-  currentPath: string
-  onGoHome: () => void
-  onNewApp: () => void
-  onLogout: () => void
-  children: React.ReactNode
+  user: User;
+  currentPath: string;
+  onGoHome: () => void;
+  onNewApp: () => void;
+  onLogout: () => void;
+  children: React.ReactNode;
 }) {
-  const { t } = useI18n()
-  const isCreating = currentPath === '/new' || currentPath === '/workspace'
-  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false)
-  const closeMobileNav = () => setIsMobileNavOpen(false)
+  const { t } = useI18n();
+  const isCreating = currentPath === '/new' || currentPath === '/workspace';
+  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
+  const closeMobileNav = () => setIsMobileNavOpen(false);
 
   return (
     <main className="app-shell">
@@ -2633,22 +2825,26 @@ function AppShell({
         </button>
         <nav className={`sidebar-nav${isMobileNavOpen ? ' open' : ''}`}>
           <button
-            className={isCreating ? 'sidebar-nav-item' : 'sidebar-nav-item active'}
+            className={
+              isCreating ? 'sidebar-nav-item' : 'sidebar-nav-item active'
+            }
             type="button"
             onClick={() => {
-              closeMobileNav()
-              onGoHome()
+              closeMobileNav();
+              onGoHome();
             }}
           >
             <span className="sidebar-nav-dot" />
             {t('topbar.workspaces')}
           </button>
           <button
-            className={isCreating ? 'sidebar-nav-item active' : 'sidebar-nav-item'}
+            className={
+              isCreating ? 'sidebar-nav-item active' : 'sidebar-nav-item'
+            }
             type="button"
             onClick={() => {
-              closeMobileNav()
-              onNewApp()
+              closeMobileNav();
+              onNewApp();
             }}
           >
             <span className="sidebar-nav-dot" />
@@ -2658,7 +2854,9 @@ function AppShell({
         <div className="sidebar-foot">
           <LanguageSwitcher />
           <div className="sidebar-user">
-            <span className="sidebar-avatar">{user.email.slice(0, 2).toUpperCase()}</span>
+            <span className="sidebar-avatar">
+              {user.email.slice(0, 2).toUpperCase()}
+            </span>
             <div className="sidebar-user-meta">
               <span className="sidebar-user-name">{user.email}</span>
             </div>
@@ -2685,17 +2883,17 @@ function AppShell({
         <SiteFooter variant="app" />
       </section>
     </main>
-  )
+  );
 }
 
 type DashboardProps = {
-  projects: Project[]
-  selectedProject?: Project
-  onDeleteProject: (projectId: string) => void
-  onNewBackend: () => void
-  onResumeProject: (projectId: string) => void
-  onSelectProject: (projectId: string) => void
-}
+  projects: Project[];
+  selectedProject?: Project;
+  onDeleteProject: (projectId: string) => void;
+  onNewBackend: () => void;
+  onResumeProject: (projectId: string) => void;
+  onSelectProject: (projectId: string) => void;
+};
 
 function Dashboard({
   projects,
@@ -2705,31 +2903,40 @@ function Dashboard({
   onResumeProject,
   onSelectProject,
 }: DashboardProps) {
-  const { t, language } = useI18n()
-  const selectedDownloadUrl = selectedProject ? getNestJsDownloadUrl(selectedProject) : null
+  const { t, language } = useI18n();
+  const selectedDownloadUrl = selectedProject
+    ? getNestJsDownloadUrl(selectedProject)
+    : null;
 
   function handleDeleteProject() {
     if (!selectedProject || !window.confirm(t('dashboard.confirmDelete'))) {
-      return
+      return;
     }
 
-    onDeleteProject(selectedProject.id)
+    onDeleteProject(selectedProject.id);
   }
 
   if (projects.length === 0) {
     return (
-      <section className="dashboard-empty" aria-label={t('dashboard.projectList')}>
+      <section
+        className="dashboard-empty"
+        aria-label={t('dashboard.projectList')}
+      >
         <div className="dashboard-empty-icon" aria-hidden="true">
           <span />
         </div>
         <p className="dashboard-empty-copy">
           {t('dashboard.emptyCreatePrefix')}{' '}
-          <button className="dashboard-empty-action" type="button" onClick={onNewBackend}>
+          <button
+            className="dashboard-empty-action"
+            type="button"
+            onClick={onNewBackend}
+          >
             {t('dashboard.emptyCreateAction')}
           </button>
         </p>
       </section>
-    )
+    );
   }
 
   return (
@@ -2745,7 +2952,9 @@ function Dashboard({
           <article
             key={project.id}
             className={
-              project.id === selectedProject?.id ? 'project-card selected' : 'project-card'
+              project.id === selectedProject?.id
+                ? 'project-card selected'
+                : 'project-card'
             }
           >
             <button
@@ -2753,7 +2962,9 @@ function Dashboard({
               type="button"
               onClick={() => onSelectProject(project.id)}
             >
-              <span className={`status ${project.status}`}>{t(`status.${project.status}`)}</span>
+              <span className={`status ${project.status}`}>
+                {t(`status.${project.status}`)}
+              </span>
               <strong>{project.name}</strong>
               <p>{project.description}</p>
             </button>
@@ -2788,11 +2999,19 @@ function Dashboard({
                 </button>
               ) : null}
               {selectedDownloadUrl && selectedProject.status === 'verified' ? (
-                <a className="preview-download" href={selectedDownloadUrl} download>
+                <a
+                  className="preview-download"
+                  href={selectedDownloadUrl}
+                  download
+                >
                   {t('dashboard.downloadNest')}
                 </a>
               ) : null}
-              <button className="project-delete-button" type="button" onClick={handleDeleteProject}>
+              <button
+                className="project-delete-button"
+                type="button"
+                onClick={handleDeleteProject}
+              >
                 {t('dashboard.deleteProject')}
               </button>
             </div>
@@ -2827,72 +3046,75 @@ function Dashboard({
         </div>
       ) : null}
     </section>
-  )
+  );
 }
 
 function buildProjectSummary(project: Project, lang: 'en' | 'ko'): string {
-  const draft = project.draftProject
-  const isKo = lang === 'ko'
+  const draft = project.draftProject;
+  const isKo = lang === 'ko';
 
-  const name = project.name
-  const description = project.description
-  const framework = project.framework
-  const database = project.database
-  const purpose = draft?.planning?.purpose
-  const constraints = draft?.planning?.constraints
+  const name = project.name;
+  const description = project.description;
+  const framework = project.framework;
+  const database = project.database;
+  const purpose = draft?.planning?.purpose;
+  const constraints = draft?.planning?.constraints;
 
-  const lines: string[] = [`# ${name}`]
+  const lines: string[] = [`# ${name}`];
 
   if (description) {
-    lines.push('', description)
+    lines.push('', description);
   }
 
-  lines.push('', `## ${isKo ? '기술 스택' : 'Tech Stack'}`)
-  lines.push(`- Framework: ${framework}`)
-  lines.push(`- Database: ${database}`)
+  lines.push('', `## ${isKo ? '기술 스택' : 'Tech Stack'}`);
+  lines.push(`- Framework: ${framework}`);
+  lines.push(`- Database: ${database}`);
 
   if (purpose) {
-    lines.push('', `## ${isKo ? '목적' : 'Purpose'}`)
-    lines.push(purpose)
+    lines.push('', `## ${isKo ? '목적' : 'Purpose'}`);
+    lines.push(purpose);
   }
 
   if (constraints) {
-    lines.push('', `## ${isKo ? '제약 조건' : 'Constraints'}`)
-    lines.push(constraints)
+    lines.push('', `## ${isKo ? '제약 조건' : 'Constraints'}`);
+    lines.push(constraints);
   }
 
-  return lines.join('\n')
+  return lines.join('\n');
 }
 
 function getNestJsDownloadUrl(project: Project) {
   return project.workspaceId
     ? `${apiBaseUrl}/api/generate/workspace/${project.workspaceId}/nestjs/download`
-    : null
+    : null;
 }
 
 function formatCoveragePercent(coverageSummary?: string) {
-  const coveragePercent = coverageSummary?.match(/All files\s+\|\s*([\d.]+)/)?.[1]
+  const coveragePercent = coverageSummary?.match(
+    /All files\s+\|\s*([\d.]+)/,
+  )?.[1];
 
-  return coveragePercent ? `${coveragePercent}%` : undefined
+  return coveragePercent ? `${coveragePercent}%` : undefined;
 }
 
 function createWorkspaceSnapshotPayload(
   draftProject: DraftProject,
   flowStep: number,
   state?: {
-    entities?: ErdEntity[]
-    relations?: ErdRelation[]
-    operations?: BackendOperation[]
-    generatedWorkspace?: GenerateWorkspace | null
-    generatedNestResult?: NestJsAgentResult | null
-    testAgentResult?: TestAgentResult | null
+    entities?: ErdEntity[];
+    relations?: ErdRelation[];
+    operations?: BackendOperation[];
+    generatedWorkspace?: GenerateWorkspace | null;
+    generatedNestResult?: NestJsAgentResult | null;
+    testAgentResult?: TestAgentResult | null;
   },
 ): WorkspaceSnapshot {
-  const enabledOperations = state?.operations?.filter((operation) => operation.enabled) ?? []
-  const currentStep = flowSteps[flowStep] ?? 'flow.project'
-  const generatedWorkspace = state?.generatedWorkspace
-  const generatedNestResult = state?.generatedNestResult
-  const testAgentResult = state?.testAgentResult
+  const enabledOperations =
+    state?.operations?.filter((operation) => operation.enabled) ?? [];
+  const currentStep = flowSteps[flowStep] ?? 'flow.project';
+  const generatedWorkspace = state?.generatedWorkspace;
+  const generatedNestResult = state?.generatedNestResult;
+  const testAgentResult = state?.testAgentResult;
 
   return {
     name: draftProject.name,
@@ -2906,7 +3128,10 @@ function createWorkspaceSnapshotPayload(
         : 'planning',
     currentStep: currentStep.replace('flow.', ''),
     flowStep,
-    workspaceId: generatedWorkspace?.workspaceId ?? generatedNestResult?.workspaceId ?? null,
+    workspaceId:
+      generatedWorkspace?.workspaceId ??
+      generatedNestResult?.workspaceId ??
+      null,
     workspacePath: generatedWorkspace?.workspacePath ?? null,
     nestJsAppPath: generatedNestResult?.appPath ?? null,
     metrics: {
@@ -2922,26 +3147,32 @@ function createWorkspaceSnapshotPayload(
     generatedWorkspace,
     generatedNestResult,
     testAgentResult,
-  }
+  };
 }
 
-type AuthFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
+type AuthFetch = (
+  input: RequestInfo | URL,
+  init?: RequestInit,
+) => Promise<Response>;
 
 type CreateFlowProps = {
-  workspaceId: string | null
-  initialWorkspace?: Project
-  draftProject: DraftProject
-  flowStep: number
-  authFetch: AuthFetch
-  token: string | null
-  onCancel: () => void
-  onChangeDraft: (draftProject: DraftProject) => void
-  onCreateWorkspace: (snapshot: WorkspaceSnapshot) => Promise<Project>
-  onFinish: (project: CompletedProjectPayload) => void | Promise<void>
-  onGoToStep: (step: number) => void
-  onNext: () => void
-  onPersist: (workspaceId: string, snapshot: WorkspaceSnapshot) => Promise<void>
-}
+  workspaceId: string | null;
+  initialWorkspace?: Project;
+  draftProject: DraftProject;
+  flowStep: number;
+  authFetch: AuthFetch;
+  token: string | null;
+  onCancel: () => void;
+  onChangeDraft: (draftProject: DraftProject) => void;
+  onCreateWorkspace: (snapshot: WorkspaceSnapshot) => Promise<Project>;
+  onFinish: (project: CompletedProjectPayload) => void | Promise<void>;
+  onGoToStep: (step: number) => void;
+  onNext: () => void;
+  onPersist: (
+    workspaceId: string,
+    snapshot: WorkspaceSnapshot,
+  ) => Promise<void>;
+};
 
 function CreateFlow({
   workspaceId,
@@ -2958,75 +3189,79 @@ function CreateFlow({
   onNext,
   onPersist,
 }: CreateFlowProps) {
-  const { language, t } = useI18n()
-  const isLastStep = flowStep === flowSteps.length - 1
-  const persistRef = useRef(onPersist)
+  const { language, t } = useI18n();
+  const isLastStep = flowStep === flowSteps.length - 1;
+  const persistRef = useRef(onPersist);
   const [entities, setEntities] = useState<ErdEntity[]>(
     initialWorkspace?.entities ?? initialEntities,
-  )
+  );
   const [relations, setRelations] = useState<ErdRelation[]>(
     initialWorkspace?.relations ?? initialRelations,
-  )
+  );
   const [operations, setOperations] = useState<BackendOperation[]>(
     () =>
       initialWorkspace?.operations ??
       createDefaultOperations(initialWorkspace?.entities ?? initialEntities, t),
-  )
+  );
   const [isNestJsAppReady, setIsNestJsAppReady] = useState(
     initialWorkspace?.generatedNestResult?.build?.success === true,
-  )
+  );
   const [isNestJsTestReady, setIsNestJsTestReady] = useState(
     initialWorkspace?.testAgentResult?.verified === true,
-  )
-  const [generatedWorkspace, setGeneratedWorkspace] = useState<GenerateWorkspace | null>(
-    initialWorkspace?.generatedWorkspace ?? null,
-  )
-  const [generatedNestResult, setGeneratedNestResult] = useState<NestJsAgentResult | null>(
-    initialWorkspace?.generatedNestResult ?? null,
-  )
-  const [testAgentResult, setTestAgentResult] = useState<TestAgentResult | null>(
-    initialWorkspace?.testAgentResult ?? null,
-  )
-  const [isAiWizardOpen, setIsAiWizardOpen] = useState(false)
-  const [isAiApplying, setIsAiApplying] = useState(false)
-  const [aiError, setAiError] = useState<string | null>(null)
-  const [isSavingWorkspace, setIsSavingWorkspace] = useState(false)
-  const [saveError, setSaveError] = useState<string | null>(null)
-  const [pendingStepBack, setPendingStepBack] = useState<number | null>(null)
-  const canUseAiWizard = flowStep < 4
+  );
+  const [generatedWorkspace, setGeneratedWorkspace] =
+    useState<GenerateWorkspace | null>(
+      initialWorkspace?.generatedWorkspace ?? null,
+    );
+  const [generatedNestResult, setGeneratedNestResult] =
+    useState<NestJsAgentResult | null>(
+      initialWorkspace?.generatedNestResult ?? null,
+    );
+  const [testAgentResult, setTestAgentResult] =
+    useState<TestAgentResult | null>(initialWorkspace?.testAgentResult ?? null);
+  const [isAiWizardOpen, setIsAiWizardOpen] = useState(false);
+  const [isAiApplying, setIsAiApplying] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [isSavingWorkspace, setIsSavingWorkspace] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [pendingStepBack, setPendingStepBack] = useState<number | null>(null);
+  const canUseAiWizard = flowStep < 4;
 
   function isStepComplete(step: number): boolean {
     switch (step) {
       case 0:
-        return draftProject.name.trim() !== '' && draftProject.description.trim() !== ''
+        return (
+          draftProject.name.trim() !== '' &&
+          draftProject.description.trim() !== ''
+        );
       case 1:
         return (
           draftProject.planning.purpose.trim() !== '' &&
           draftProject.planning.constraints.trim() !== ''
-        )
+        );
       case 2:
-        return entities.length > 0
+        return entities.length > 0;
       case 3:
-        return operations.some((op) => op.enabled)
+        return operations.some((op) => op.enabled);
       case 4:
-        return isNestJsAppReady
+        return isNestJsAppReady;
       case 5:
-        return isNestJsTestReady
+        return isNestJsTestReady;
       default:
-        return true
+        return true;
     }
   }
 
-  const isCurrentStepComplete = isStepComplete(flowStep)
+  const isCurrentStepComplete = isStepComplete(flowStep);
 
   function requestGoBack(targetStep: number) {
     if (targetStep < flowStep) {
-      setPendingStepBack(targetStep)
+      setPendingStepBack(targetStep);
     }
   }
 
   function confirmGoBack() {
-    const targetStep = pendingStepBack
+    const targetStep = pendingStepBack;
 
     if (targetStep !== null) {
       const nextDraftProject =
@@ -3038,35 +3273,37 @@ function CreateFlow({
                 constraints: '',
               },
             }
-          : draftProject
-      const nextEntities = targetStep <= 1 ? [] : entities
-      const nextRelations = targetStep <= 1 ? [] : relations
-      const nextOperations = targetStep <= 2 ? [] : operations
-      const nextGeneratedWorkspace = targetStep <= 3 ? null : generatedWorkspace
-      const nextGeneratedNestResult = targetStep <= 3 ? null : generatedNestResult
-      const nextTestAgentResult = targetStep <= 4 ? null : testAgentResult
+          : draftProject;
+      const nextEntities = targetStep <= 1 ? [] : entities;
+      const nextRelations = targetStep <= 1 ? [] : relations;
+      const nextOperations = targetStep <= 2 ? [] : operations;
+      const nextGeneratedWorkspace =
+        targetStep <= 3 ? null : generatedWorkspace;
+      const nextGeneratedNestResult =
+        targetStep <= 3 ? null : generatedNestResult;
+      const nextTestAgentResult = targetStep <= 4 ? null : testAgentResult;
 
       if (nextDraftProject !== draftProject) {
-        onChangeDraft(nextDraftProject)
+        onChangeDraft(nextDraftProject);
       }
       if (targetStep <= 1) {
-        setEntities([])
-        setRelations([])
+        setEntities([]);
+        setRelations([]);
       }
       if (targetStep <= 2) {
-        setOperations([])
+        setOperations([]);
       }
       if (targetStep <= 3) {
-        setGeneratedWorkspace(null)
-        setGeneratedNestResult(null)
-        setIsNestJsAppReady(false)
+        setGeneratedWorkspace(null);
+        setGeneratedNestResult(null);
+        setIsNestJsAppReady(false);
       }
       if (targetStep <= 4) {
-        setTestAgentResult(null)
-        setIsNestJsTestReady(false)
+        setTestAgentResult(null);
+        setIsNestJsTestReady(false);
       }
-      setAiError(null)
-      setIsAiWizardOpen(false)
+      setAiError(null);
+      setIsAiWizardOpen(false);
 
       if (workspaceId) {
         void onPersist(workspaceId, {
@@ -3078,10 +3315,10 @@ function CreateFlow({
             generatedNestResult: nextGeneratedNestResult,
             testAgentResult: nextTestAgentResult,
           }),
-        })
+        });
       }
-      onGoToStep(targetStep)
-      setPendingStepBack(null)
+      onGoToStep(targetStep);
+      setPendingStepBack(null);
     }
   }
 
@@ -3090,22 +3327,22 @@ function CreateFlow({
       entities.length === 3 &&
       ['customer', 'order', 'payment'].every((entityId) =>
         entities.some((entity) => entity.id === entityId),
-      )
+      );
 
     if (hasLegacyMockErd) {
-      setEntities([])
-      setRelations([])
-      setOperations([])
+      setEntities([]);
+      setRelations([]);
+      setOperations([]);
     }
-  }, [entities])
+  }, [entities]);
 
   useEffect(() => {
-    persistRef.current = onPersist
-  }, [onPersist])
+    persistRef.current = onPersist;
+  }, [onPersist]);
 
   useEffect(() => {
     if (!workspaceId) {
-      return
+      return;
     }
 
     const timeoutId = window.setTimeout(() => {
@@ -3118,10 +3355,10 @@ function CreateFlow({
           generatedNestResult,
           testAgentResult,
         }),
-      })
-    }, 500)
+      });
+    }, 500);
 
-    return () => window.clearTimeout(timeoutId)
+    return () => window.clearTimeout(timeoutId);
   }, [
     draftProject,
     entities,
@@ -3132,32 +3369,34 @@ function CreateFlow({
     relations,
     testAgentResult,
     workspaceId,
-  ])
+  ]);
 
   // Track the previous values of the inputs that invalidate generated output.
   // Comparing by reference (rather than a mount flag) is safe under StrictMode's
   // double-invoked effects: on mount and on the StrictMode replay the reference is
   // unchanged, so we only reset when the user actually edits these inputs.
-  const prevEntitiesRef = useRef(entities)
-  const prevDraftProjectRef = useRef(draftProject)
-  const prevRelationsRef = useRef(relations)
-  const prevOperationsRef = useRef(operations)
+  const prevEntitiesRef = useRef(entities);
+  const prevDraftProjectRef = useRef(draftProject);
+  const prevRelationsRef = useRef(relations);
+  const prevOperationsRef = useRef(operations);
 
   useEffect(() => {
     if (prevEntitiesRef.current === entities) {
-      return
+      return;
     }
-    prevEntitiesRef.current = entities
-    setIsNestJsAppReady(false)
-    setIsNestJsTestReady(false)
-    setGeneratedNestResult(null)
-    setTestAgentResult(null)
+    prevEntitiesRef.current = entities;
+    setIsNestJsAppReady(false);
+    setIsNestJsTestReady(false);
+    setGeneratedNestResult(null);
+    setTestAgentResult(null);
     setOperations((currentOperations) => {
-      const entityIds = new Set(entities.map((entity) => entity.id))
+      const entityIds = new Set(entities.map((entity) => entity.id));
       const activeOperations = currentOperations
         .filter((operation) => entityIds.has(operation.entityId))
         .map((operation) => {
-          const entity = entities.find((currentEntity) => currentEntity.id === operation.entityId)
+          const entity = entities.find(
+            (currentEntity) => currentEntity.id === operation.entityId,
+          );
 
           return entity
             ? {
@@ -3165,25 +3404,32 @@ function CreateFlow({
                 payloadFieldIds: operation.payloadFieldIds.filter((fieldId) =>
                   entity.fields.some((field) => field.id === fieldId),
                 ),
-                requestFieldIds: (operation.requestFieldIds ?? operation.payloadFieldIds).filter(
-                  (fieldId) => entity.fields.some((field) => field.id === fieldId),
+                requestFieldIds: (
+                  operation.requestFieldIds ?? operation.payloadFieldIds
+                ).filter((fieldId) =>
+                  entity.fields.some((field) => field.id === fieldId),
                 ),
                 responseFieldIds: (
-                  operation.responseFieldIds ?? entity.fields.map((field) => field.id)
-                ).filter((fieldId) => entity.fields.some((field) => field.id === fieldId)),
+                  operation.responseFieldIds ??
+                  entity.fields.map((field) => field.id)
+                ).filter((fieldId) =>
+                  entity.fields.some((field) => field.id === fieldId),
+                ),
                 requestCustomFields: operation.requestCustomFields ?? [],
                 responseCustomFields: operation.responseCustomFields ?? [],
               }
-            : operation
-        })
-      const operationIds = new Set(activeOperations.map((operation) => operation.id))
+            : operation;
+        });
+      const operationIds = new Set(
+        activeOperations.map((operation) => operation.id),
+      );
       const missingDefaults = createDefaultOperations(entities, t).filter(
         (operation) => !operationIds.has(operation.id),
-      )
+      );
 
-      return [...activeOperations, ...missingDefaults]
-    })
-  }, [entities, t])
+      return [...activeOperations, ...missingDefaults];
+    });
+  }, [entities, t]);
 
   useEffect(() => {
     if (
@@ -3191,23 +3437,23 @@ function CreateFlow({
       prevRelationsRef.current === relations &&
       prevOperationsRef.current === operations
     ) {
-      return
+      return;
     }
-    prevDraftProjectRef.current = draftProject
-    prevRelationsRef.current = relations
-    prevOperationsRef.current = operations
-    setIsNestJsAppReady(false)
-    setIsNestJsTestReady(false)
-    setGeneratedWorkspace(null)
-    setGeneratedNestResult(null)
-    setTestAgentResult(null)
-  }, [draftProject, relations, operations])
+    prevDraftProjectRef.current = draftProject;
+    prevRelationsRef.current = relations;
+    prevOperationsRef.current = operations;
+    setIsNestJsAppReady(false);
+    setIsNestJsTestReady(false);
+    setGeneratedWorkspace(null);
+    setGeneratedNestResult(null);
+    setTestAgentResult(null);
+  }, [draftProject, relations, operations]);
 
   useEffect(() => {
     if (!canUseAiWizard) {
-      setIsAiWizardOpen(false)
+      setIsAiWizardOpen(false);
     }
-  }, [canUseAiWizard])
+  }, [canUseAiWizard]);
 
   async function applyAiDraft() {
     const step =
@@ -3217,13 +3463,16 @@ function CreateFlow({
           ? 'planning'
           : flowStep === 2
             ? 'erd'
-            : 'operations'
+            : 'operations';
 
-    setIsAiApplying(true)
-    setAiError(null)
+    setIsAiApplying(true);
+    setAiError(null);
 
-    const abortController = new AbortController()
-    const timeoutId = window.setTimeout(() => abortController.abort(), aiWizardTimeoutMs)
+    const abortController = new AbortController();
+    const timeoutId = window.setTimeout(
+      () => abortController.abort(),
+      aiWizardTimeoutMs,
+    );
 
     try {
       const response = await authFetch(`${apiBaseUrl}/api/ai/wizard`, {
@@ -3245,19 +3494,19 @@ function CreateFlow({
                     relations,
                   },
         ),
-      })
+      });
 
       if (!response.ok) {
-        throw new Error(t('ai.failed'))
+        throw new Error(t('ai.failed'));
       }
 
       const result = (await response.json()) as {
-        project?: Partial<DraftProject>
-        planning?: Partial<DraftProject['planning']>
-        entities?: ErdEntity[]
-        relations?: ErdRelation[]
-        operations?: BackendOperation[]
-      }
+        project?: Partial<DraftProject>;
+        planning?: Partial<DraftProject['planning']>;
+        entities?: ErdEntity[];
+        relations?: ErdRelation[];
+        operations?: BackendOperation[];
+      };
 
       if (step === 'project' && result.project) {
         onChangeDraft({
@@ -3265,7 +3514,7 @@ function CreateFlow({
           name: result.project.name ?? draftProject.name,
           description: result.project.description ?? draftProject.description,
           database: result.project.database ?? draftProject.database,
-        })
+        });
       }
 
       if (step === 'planning' && result.planning) {
@@ -3273,20 +3522,24 @@ function CreateFlow({
           ...draftProject,
           planning: {
             purpose: result.planning.purpose ?? draftProject.planning.purpose,
-            constraints: result.planning.constraints ?? draftProject.planning.constraints,
+            constraints:
+              result.planning.constraints ?? draftProject.planning.constraints,
           },
-        })
+        });
       }
 
       if (step === 'erd' && result.entities?.length) {
-        const nextErd = normalizeAiErdDraft(result.entities, result.relations ?? [])
-        setEntities(nextErd.entities)
-        setRelations(nextErd.relations)
-        setOperations(createDefaultOperations(nextErd.entities, t))
+        const nextErd = normalizeAiErdDraft(
+          result.entities,
+          result.relations ?? [],
+        );
+        setEntities(nextErd.entities);
+        setRelations(nextErd.relations);
+        setOperations(createDefaultOperations(nextErd.entities, t));
       }
 
       if (step === 'operations' && result.operations?.length) {
-        setOperations(normalizeAiOperations(result.operations, entities))
+        setOperations(normalizeAiOperations(result.operations, entities));
       }
     } catch (error) {
       setAiError(
@@ -3295,40 +3548,40 @@ function CreateFlow({
           : error instanceof Error
             ? error.message
             : t('ai.failed'),
-      )
+      );
     } finally {
-      window.clearTimeout(timeoutId)
-      setIsAiApplying(false)
+      window.clearTimeout(timeoutId);
+      setIsAiApplying(false);
     }
   }
 
   function aiWizardTitle() {
-    if (flowStep === 0) return t('ai.projectTitle')
-    if (flowStep === 1) return t('ai.planningTitle')
-    if (flowStep === 2) return t('ai.erdTitle')
-    if (flowStep === 3) return t('ai.operationsTitle')
-    return t('ai.unavailable')
+    if (flowStep === 0) return t('ai.projectTitle');
+    if (flowStep === 1) return t('ai.planningTitle');
+    if (flowStep === 2) return t('ai.erdTitle');
+    if (flowStep === 3) return t('ai.operationsTitle');
+    return t('ai.unavailable');
   }
 
   function aiWizardCopy() {
-    if (flowStep === 0) return t('ai.projectCopy')
-    if (flowStep === 1) return t('ai.planningCopy')
-    if (flowStep === 2) return t('ai.erdCopy')
-    if (flowStep === 3) return t('ai.operationsCopy')
-    return t('ai.unavailable')
+    if (flowStep === 0) return t('ai.projectCopy');
+    if (flowStep === 1) return t('ai.planningCopy');
+    if (flowStep === 2) return t('ai.erdCopy');
+    if (flowStep === 3) return t('ai.operationsCopy');
+    return t('ai.unavailable');
   }
 
   function handleWorkspaceChange(workspace: GenerateWorkspace | null) {
-    setGeneratedWorkspace(workspace)
-    setGeneratedNestResult(null)
-    setTestAgentResult(null)
-    setIsNestJsTestReady(false)
+    setGeneratedWorkspace(workspace);
+    setGeneratedNestResult(null);
+    setTestAgentResult(null);
+    setIsNestJsTestReady(false);
   }
 
   function handleNestJsResultChange(result: NestJsAgentResult | null) {
-    setGeneratedNestResult(result)
-    setTestAgentResult(null)
-    setIsNestJsTestReady(false)
+    setGeneratedNestResult(result);
+    setTestAgentResult(null);
+    setIsNestJsTestReady(false);
   }
 
   function finishProject() {
@@ -3337,7 +3590,8 @@ function CreateFlow({
       description: draftProject.description,
       framework: draftProject.framework,
       database: draftProject.database,
-      workspaceId: generatedWorkspace?.workspaceId ?? generatedNestResult?.workspaceId,
+      workspaceId:
+        generatedWorkspace?.workspaceId ?? generatedNestResult?.workspaceId,
       workspacePath: generatedWorkspace?.workspacePath,
       nestJsAppPath: generatedNestResult?.appPath,
       metrics: {
@@ -3346,20 +3600,20 @@ function CreateFlow({
         tests: testAgentResult?.generatedFiles.length ?? 0,
         coverage: formatCoveragePercent(testAgentResult?.test.coverageSummary),
       },
-    })
+    });
   }
 
   async function handleNext() {
     if (workspaceId || flowStep !== 0) {
-      onNext()
-      return
+      onNext();
+      return;
     }
 
-    setIsSavingWorkspace(true)
-    setSaveError(null)
+    setIsSavingWorkspace(true);
+    setSaveError(null);
 
     try {
-      const nextStep = 1
+      const nextStep = 1;
       await onCreateWorkspace(
         createWorkspaceSnapshotPayload(draftProject, nextStep, {
           entities,
@@ -3369,12 +3623,14 @@ function CreateFlow({
           generatedNestResult,
           testAgentResult,
         }),
-      )
-      onGoToStep(nextStep)
+      );
+      onGoToStep(nextStep);
     } catch (error) {
-      setSaveError(error instanceof Error ? error.message : t('error.workspaceFailed'))
+      setSaveError(
+        error instanceof Error ? error.message : t('error.workspaceFailed'),
+      );
     } finally {
-      setIsSavingWorkspace(false)
+      setIsSavingWorkspace(false);
     }
   }
 
@@ -3404,7 +3660,9 @@ function CreateFlow({
         {flowSteps.map((step, index) => (
           <button
             key={step}
-            className={index === flowStep ? 'active' : index < flowStep ? 'done' : ''}
+            className={
+              index === flowStep ? 'active' : index < flowStep ? 'done' : ''
+            }
             disabled={index >= flowStep}
             type="button"
             onClick={() => requestGoBack(index)}
@@ -3424,7 +3682,11 @@ function CreateFlow({
           </div>
           <div className="ai-wizard-actions">
             {aiError ? <p className="form-error">{aiError}</p> : null}
-            <button type="button" disabled={isAiApplying} onClick={applyAiDraft}>
+            <button
+              type="button"
+              disabled={isAiApplying}
+              onClick={applyAiDraft}
+            >
               {isAiApplying ? t('ai.applying') : t('ai.apply')}
             </button>
           </div>
@@ -3433,10 +3695,16 @@ function CreateFlow({
 
       <div className="flow-body">
         {flowStep === 0 ? (
-          <ProjectSetup draftProject={draftProject} onChangeDraft={onChangeDraft} />
+          <ProjectSetup
+            draftProject={draftProject}
+            onChangeDraft={onChangeDraft}
+          />
         ) : null}
         {flowStep === 1 ? (
-          <PlanningStep draftProject={draftProject} onChangeDraft={onChangeDraft} />
+          <PlanningStep
+            draftProject={draftProject}
+            onChangeDraft={onChangeDraft}
+          />
         ) : null}
         {flowStep === 2 ? (
           <ErdStep
@@ -3485,7 +3753,9 @@ function CreateFlow({
         <button
           className="ghost-button"
           type="button"
-          onClick={flowStep === 0 ? onCancel : () => requestGoBack(flowStep - 1)}
+          onClick={
+            flowStep === 0 ? onCancel : () => requestGoBack(flowStep - 1)
+          }
         >
           {flowStep === 0 ? t('flow.cancel') : t('flow.back')}
         </button>
@@ -3526,16 +3796,16 @@ function CreateFlow({
         </div>
       ) : null}
     </section>
-  )
+  );
 }
 
 type ProjectSetupProps = {
-  draftProject: DraftProject
-  onChangeDraft: (draftProject: DraftProject) => void
-}
+  draftProject: DraftProject;
+  onChangeDraft: (draftProject: DraftProject) => void;
+};
 
 function ProjectSetup({ draftProject, onChangeDraft }: ProjectSetupProps) {
-  const { t } = useI18n()
+  const { t } = useI18n();
 
   return (
     <div className="flow-grid">
@@ -3547,7 +3817,9 @@ function ProjectSetup({ draftProject, onChangeDraft }: ProjectSetupProps) {
             <input
               placeholder={t('project.namePlaceholder')}
               value={draftProject.name}
-              onChange={(event) => onChangeDraft({ ...draftProject, name: event.target.value })}
+              onChange={(event) =>
+                onChangeDraft({ ...draftProject, name: event.target.value })
+              }
             />
           </label>
           <label>
@@ -3604,17 +3876,17 @@ function ProjectSetup({ draftProject, onChangeDraft }: ProjectSetupProps) {
         </div>
       </section>
     </div>
-  )
+  );
 }
 
 function PlanningStep({
   draftProject,
   onChangeDraft,
 }: {
-  draftProject: DraftProject
-  onChangeDraft: (draftProject: DraftProject) => void
+  draftProject: DraftProject;
+  onChangeDraft: (draftProject: DraftProject) => void;
 }) {
-  const { t } = useI18n()
+  const { t } = useI18n();
 
   function updatePlanning(key: keyof DraftProject['planning'], value: string) {
     onChangeDraft({
@@ -3623,7 +3895,7 @@ function PlanningStep({
         ...draftProject.planning,
         [key]: value,
       },
-    })
+    });
   }
 
   return (
@@ -3645,7 +3917,9 @@ function PlanningStep({
           <textarea
             placeholder={t('planning.constraintsPlaceholder')}
             value={draftProject.planning.constraints}
-            onChange={(event) => updatePlanning('constraints', event.target.value)}
+            onChange={(event) =>
+              updatePlanning('constraints', event.target.value)
+            }
           />
         </label>
       </section>
@@ -3658,161 +3932,168 @@ function PlanningStep({
         <pre>{buildSkillsMarkdown(draftProject, t)}</pre>
       </section>
     </div>
-  )
+  );
 }
 
-type FieldType = 'uuid' | 'string' | 'int' | 'datetime' | 'boolean' | 'enum'
-type Cardinality = '1' | 'N'
-type RelationDirection = 'one-way' | 'two-way'
+type FieldType = 'uuid' | 'string' | 'int' | 'datetime' | 'boolean' | 'enum';
+type Cardinality = '1' | 'N';
+type RelationDirection = 'one-way' | 'two-way';
 
 type ErdField = {
-  id: string
-  name: string
-  type: FieldType
-  isPrimaryKey: boolean
-  isNotNull: boolean
-  isForeignKey?: boolean
-  referencesEntityId?: string
-}
+  id: string;
+  name: string;
+  type: FieldType;
+  isPrimaryKey: boolean;
+  isNotNull: boolean;
+  isForeignKey?: boolean;
+  referencesEntityId?: string;
+};
 
 type ErdEntity = {
-  id: string
-  name: string
-  x: number
-  y: number
-  fields: ErdField[]
-}
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  fields: ErdField[];
+};
 
 type ErdRelation = {
-  id: string
-  sourceId: string
-  targetId: string
-  sourceCardinality: Cardinality
-  targetCardinality: Cardinality
-  direction: RelationDirection
-  foreignKeyOwnerId?: string
-  foreignKeyFieldName?: string
-}
+  id: string;
+  sourceId: string;
+  targetId: string;
+  sourceCardinality: Cardinality;
+  targetCardinality: Cardinality;
+  direction: RelationDirection;
+  foreignKeyOwnerId?: string;
+  foreignKeyFieldName?: string;
+};
 
-type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
-type OperationKind = 'crud' | 'custom'
+type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+type OperationKind = 'crud' | 'custom';
 
 type OperationCustomField = {
-  id: string
-  name: string
-  type: FieldType | string
-}
+  id: string;
+  name: string;
+  type: FieldType | string;
+};
 
 type BackendOperation = {
-  id: string
-  entityId: string
-  kind: OperationKind
-  label: string
-  method: HttpMethod
-  path: string
-  enabled: boolean
-  payloadFieldIds: string[]
-  requestFieldIds: string[]
-  responseFieldIds: string[]
-  requestCustomFields: OperationCustomField[]
-  responseCustomFields: OperationCustomField[]
-  description: string
-  requirements: string
-}
+  id: string;
+  entityId: string;
+  kind: OperationKind;
+  label: string;
+  method: HttpMethod;
+  path: string;
+  enabled: boolean;
+  payloadFieldIds: string[];
+  requestFieldIds: string[];
+  responseFieldIds: string[];
+  requestCustomFields: OperationCustomField[];
+  responseCustomFields: OperationCustomField[];
+  description: string;
+  requirements: string;
+};
 
 type GenerateWorkspace = {
-  workspaceId: string
-  workspacePath: string
-  files: string[]
-}
+  workspaceId: string;
+  workspacePath: string;
+  files: string[];
+};
 
 type NestJsAgentResult = {
-  workspaceId: string
-  appPath: string
-  files: string[]
+  workspaceId: string;
+  appPath: string;
+  files: string[];
   build?: {
-    success: boolean
+    success: boolean;
     commands: Array<{
-      command: string
-      success: boolean
-      exitCode: number | null
-    }>
-    errorSummary?: string
-  }
+      command: string;
+      success: boolean;
+      exitCode: number | null;
+    }>;
+    errorSummary?: string;
+  };
   completedTasks?: Array<{
-    taskId: string
-    title: string
-    success: boolean
-    attempts: number
-    changedFiles: string[]
-  }>
-  repairAttempts?: number
-}
+    taskId: string;
+    title: string;
+    success: boolean;
+    attempts: number;
+    changedFiles: string[];
+  }>;
+  repairAttempts?: number;
+};
 
 type TestAgentResult = {
-  target: string
-  appDir: string
-  projectDir: string
+  target: string;
+  appDir: string;
+  projectDir: string;
   generatedFiles: Array<{
-    path: string
-    content: string
-  }>
-  changedFiles: string[]
+    path: string;
+    content: string;
+  }>;
+  changedFiles: string[];
   test: {
-    success: boolean
+    success: boolean;
     commands: Array<{
-      command: string
-      success: boolean
-      exitCode: number | null
-      stdout?: string
-      stderr?: string
-    }>
-    errorSummary?: string
-    coverageSummary?: string
-    testsPassed?: number
-    testsFailed?: number
-    testsTotal?: number
-  }
-  attempts: number
-  testRuns?: number
-  verified: boolean
-}
+      command: string;
+      success: boolean;
+      exitCode: number | null;
+      stdout?: string;
+      stderr?: string;
+    }>;
+    errorSummary?: string;
+    coverageSummary?: string;
+    testsPassed?: number;
+    testsFailed?: number;
+    testsTotal?: number;
+  };
+  attempts: number;
+  testRuns?: number;
+  verified: boolean;
+};
 
 type AgentProgressEvent = {
-  stage: 'started' | 'completed' | 'failed'
-  message: string
-  messageKey?: string
-  detail?: Record<string, unknown>
-}
+  stage: 'started' | 'completed' | 'failed';
+  message: string;
+  messageKey?: string;
+  detail?: Record<string, unknown>;
+};
 
 type TerminalLogLine = {
-  id: string
-  status: 'idle' | 'running' | 'success' | 'error'
-  text: string
-}
+  id: string;
+  status: 'idle' | 'running' | 'success' | 'error';
+  text: string;
+};
 
-const fieldTypes: FieldType[] = ['uuid', 'string', 'int', 'datetime', 'boolean', 'enum']
-const httpMethods: HttpMethod[] = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
-const erdWorldWidth = 20000
-const erdWorldHeight = 12000
-const erdGridSize = 28
-const erdMinZoom = 0.4
-const erdMaxZoom = 2.2
-const erdEntityWidth = 320
-const erdEntityAnchorX = erdEntityWidth / 2
-const erdEntityAnchorY = 96
+const fieldTypes: FieldType[] = [
+  'uuid',
+  'string',
+  'int',
+  'datetime',
+  'boolean',
+  'enum',
+];
+const httpMethods: HttpMethod[] = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
+const erdWorldWidth = 20000;
+const erdWorldHeight = 12000;
+const erdGridSize = 28;
+const erdMinZoom = 0.4;
+const erdMaxZoom = 2.2;
+const erdEntityWidth = 320;
+const erdEntityAnchorX = erdEntityWidth / 2;
+const erdEntityAnchorY = 96;
 
 function toForeignKeyName(entityName: string) {
   return `${entityName
     .trim()
     .replace(/[^a-zA-Z0-9 ]/g, '')
     .replace(/\s+(\w)/g, (_, letter: string) => letter.toUpperCase())
-    .replace(/^\w/, (letter) => letter.toLowerCase())}Id`
+    .replace(/^\w/, (letter) => letter.toLowerCase())}Id`;
 }
 
-const initialEntities: ErdEntity[] = []
+const initialEntities: ErdEntity[] = [];
 
-const initialRelations: ErdRelation[] = []
+const initialRelations: ErdRelation[] = [];
 
 function toRouteSegment(entityName: string) {
   return entityName
@@ -3820,7 +4101,7 @@ function toRouteSegment(entityName: string) {
     .replace(/([a-z])([A-Z])/g, '$1-$2')
     .replace(/[^a-zA-Z0-9]+/g, '-')
     .replace(/^-|-$/g, '')
-    .toLowerCase()
+    .toLowerCase();
 }
 
 function createDefaultOperations(
@@ -3828,10 +4109,10 @@ function createDefaultOperations(
   t: (key: TranslationKey, values?: TranslationValues) => string,
 ) {
   return entities.flatMap((entity) => {
-    const route = toRouteSegment(entity.name)
+    const route = toRouteSegment(entity.name);
     const writableFields = entity.fields
       .filter((field) => !field.isPrimaryKey)
-      .map((field) => field.id)
+      .map((field) => field.id);
 
     return [
       {
@@ -3914,41 +4195,52 @@ function createDefaultOperations(
         description: t('ops.defaultDeleteDescription', { entity: entity.name }),
         requirements: '',
       },
-    ]
-  })
+    ];
+  });
 }
 
 function estimateEntityHeight(fieldCount: number) {
-  const headerHeight = 40
-  const fieldRowHeight = 36
-  const addButtonHeight = 40
-  const padding = 24
-  const gap = 10
-  return headerHeight + Math.max(fieldCount, 1) * fieldRowHeight + addButtonHeight + padding + gap
+  const headerHeight = 40;
+  const fieldRowHeight = 36;
+  const addButtonHeight = 40;
+  const padding = 24;
+  const gap = 10;
+  return (
+    headerHeight +
+    Math.max(fieldCount, 1) * fieldRowHeight +
+    addButtonHeight +
+    padding +
+    gap
+  );
 }
 
 function normalizeAiEntities(aiEntities: ErdEntity[]): ErdEntity[] {
-  const cols = Math.min(aiEntities.length, 4)
-  const colGap = 60
-  const rowGap = 60
+  const cols = Math.min(aiEntities.length, 4);
+  const colGap = 60;
+  const rowGap = 60;
 
   const parsed = aiEntities.map((entity, entityIndex) => {
-    const entityId = normalizeId(entity.id || entity.name || `entity_${entityIndex + 1}`)
+    const entityId = normalizeId(
+      entity.id || entity.name || `entity_${entityIndex + 1}`,
+    );
     const fields: ErdField[] = (entity.fields?.length ? entity.fields : []).map(
       (field, fieldIndex) => {
-        const fieldName = field.name || (fieldIndex === 0 ? 'id' : `field${fieldIndex + 1}`)
+        const fieldName =
+          field.name || (fieldIndex === 0 ? 'id' : `field${fieldIndex + 1}`);
 
         return {
           id: normalizeId(field.id || `${entityId}_${fieldName}`),
           name: fieldName,
           type: fieldTypes.includes(field.type) ? field.type : 'string',
           isPrimaryKey: Boolean(field.isPrimaryKey || fieldName === 'id'),
-          isNotNull: Boolean(field.isNotNull || field.isPrimaryKey || fieldName === 'id'),
+          isNotNull: Boolean(
+            field.isNotNull || field.isPrimaryKey || fieldName === 'id',
+          ),
           ...(field.isForeignKey ? { isForeignKey: true } : {}),
           referencesEntityId: field.referencesEntityId,
-        }
+        };
       },
-    )
+    );
 
     if (!fields.some((field) => field.isPrimaryKey)) {
       fields.unshift({
@@ -3957,7 +4249,7 @@ function normalizeAiEntities(aiEntities: ErdEntity[]): ErdEntity[] {
         type: 'uuid',
         isPrimaryKey: true,
         isNotNull: true,
-      })
+      });
     }
 
     return {
@@ -3966,24 +4258,29 @@ function normalizeAiEntities(aiEntities: ErdEntity[]): ErdEntity[] {
       fields,
       origX: entity.x,
       origY: entity.y,
-    }
-  })
+    };
+  });
 
-  const rowHeights: number[] = []
+  const rowHeights: number[] = [];
   for (let i = 0; i < parsed.length; i += cols) {
-    const rowEntities = parsed.slice(i, i + cols)
-    const maxHeight = Math.max(...rowEntities.map((e) => estimateEntityHeight(e.fields.length)))
-    rowHeights.push(maxHeight)
+    const rowEntities = parsed.slice(i, i + cols);
+    const maxHeight = Math.max(
+      ...rowEntities.map((e) => estimateEntityHeight(e.fields.length)),
+    );
+    rowHeights.push(maxHeight);
   }
 
   return parsed.map((entity, entityIndex) => {
-    const col = entityIndex % cols
-    const row = Math.floor(entityIndex / cols)
-    const hasValidPos = Number.isFinite(entity.origX) && Number.isFinite(entity.origY)
-    const x = hasValidPos ? entity.origX! : 160 + col * (erdEntityWidth + colGap)
+    const col = entityIndex % cols;
+    const row = Math.floor(entityIndex / cols);
+    const hasValidPos =
+      Number.isFinite(entity.origX) && Number.isFinite(entity.origY);
+    const x = hasValidPos
+      ? entity.origX!
+      : 160 + col * (erdEntityWidth + colGap);
     const y = hasValidPos
       ? entity.origY!
-      : 180 + rowHeights.slice(0, row).reduce((sum, h) => sum + h + rowGap, 0)
+      : 180 + rowHeights.slice(0, row).reduce((sum, h) => sum + h + rowGap, 0);
 
     return {
       id: entity.entityId,
@@ -3991,95 +4288,112 @@ function normalizeAiEntities(aiEntities: ErdEntity[]): ErdEntity[] {
       x,
       y,
       fields: entity.fields,
-    }
-  })
+    };
+  });
 }
 
-function normalizeAiErdDraft(aiEntities: ErdEntity[], aiRelations: ErdRelation[]) {
-  const entities = normalizeAiEntities(aiEntities)
-  const entityById = new Map(entities.map((entity) => [entity.id, entity]))
-  const entityLookup = new Map<string, string>()
+function normalizeAiErdDraft(
+  aiEntities: ErdEntity[],
+  aiRelations: ErdRelation[],
+) {
+  const entities = normalizeAiEntities(aiEntities);
+  const entityById = new Map(entities.map((entity) => [entity.id, entity]));
+  const entityLookup = new Map<string, string>();
 
   entities.forEach((entity) => {
-    entityLookup.set(entity.id.toLowerCase(), entity.id)
-    entityLookup.set(normalizeId(entity.name).toLowerCase(), entity.id)
-    entityLookup.set(entity.name.toLowerCase(), entity.id)
-  })
+    entityLookup.set(entity.id.toLowerCase(), entity.id);
+    entityLookup.set(normalizeId(entity.name).toLowerCase(), entity.id);
+    entityLookup.set(entity.name.toLowerCase(), entity.id);
+  });
 
   function resolveEntityId(value?: string) {
     if (!value) {
-      return ''
+      return '';
     }
 
-    return entityLookup.get(String(value).toLowerCase()) ?? ''
+    return entityLookup.get(String(value).toLowerCase()) ?? '';
   }
 
   const sanitizedEntities: ErdEntity[] = entities.map((entity) => ({
     ...entity,
     fields: entity.fields.map((field): ErdField => {
-      const referencesEntityId = resolveEntityId(field.referencesEntityId)
+      const referencesEntityId = resolveEntityId(field.referencesEntityId);
 
-      if (!field.isForeignKey || !referencesEntityId || referencesEntityId === entity.id) {
-        const { isForeignKey, referencesEntityId: _referencesEntityId, ...plainField } = field
-        return plainField
+      if (
+        !field.isForeignKey ||
+        !referencesEntityId ||
+        referencesEntityId === entity.id
+      ) {
+        const {
+          isForeignKey,
+          referencesEntityId: _referencesEntityId,
+          ...plainField
+        } = field;
+        return plainField;
       }
 
       return {
         ...field,
         isForeignKey: true,
         referencesEntityId,
-      }
+      };
     }),
-  }))
+  }));
 
-  const relationKeys = new Set<string>()
+  const relationKeys = new Set<string>();
   const addRelation = (
     validRelations: ErdRelation[],
     relation: Partial<ErdRelation>,
     index: number,
   ) => {
-    const sourceId = resolveEntityId(relation.sourceId)
-    const targetId = resolveEntityId(relation.targetId)
+    const sourceId = resolveEntityId(relation.sourceId);
+    const targetId = resolveEntityId(relation.targetId);
 
     if (!sourceId || !targetId || sourceId === targetId) {
-      return validRelations
+      return validRelations;
     }
 
-    const sourceCardinality: Cardinality = relation.sourceCardinality === 'N' ? 'N' : '1'
-    const targetCardinality: Cardinality = relation.targetCardinality === '1' ? '1' : 'N'
-    const relationKey = `${sourceId}:${targetId}:${sourceCardinality}:${targetCardinality}`
+    const sourceCardinality: Cardinality =
+      relation.sourceCardinality === 'N' ? 'N' : '1';
+    const targetCardinality: Cardinality =
+      relation.targetCardinality === '1' ? '1' : 'N';
+    const relationKey = `${sourceId}:${targetId}:${sourceCardinality}:${targetCardinality}`;
 
     if (relationKeys.has(relationKey)) {
-      return validRelations
+      return validRelations;
     }
 
-    relationKeys.add(relationKey)
+    relationKeys.add(relationKey);
 
-    const requestedOwnerId = resolveEntityId(relation.foreignKeyOwnerId)
+    const requestedOwnerId = resolveEntityId(relation.foreignKeyOwnerId);
     const inferredOwnerId =
       sourceCardinality === 'N' && targetCardinality === '1'
         ? sourceId
         : sourceCardinality === '1' && targetCardinality === 'N'
           ? targetId
-          : targetId
+          : targetId;
     const foreignKeyOwnerId =
       requestedOwnerId === sourceId || requestedOwnerId === targetId
         ? requestedOwnerId
-        : inferredOwnerId
-    const referencedEntityId = foreignKeyOwnerId === sourceId ? targetId : sourceId
-    const referencedEntity = entityById.get(referencedEntityId)
+        : inferredOwnerId;
+    const referencedEntityId =
+      foreignKeyOwnerId === sourceId ? targetId : sourceId;
+    const referencedEntity = entityById.get(referencedEntityId);
     const ownerEntityIndex = sanitizedEntities.findIndex(
       (entity) => entity.id === foreignKeyOwnerId,
-    )
+    );
 
     if (!referencedEntity || ownerEntityIndex < 0) {
-      return validRelations
+      return validRelations;
     }
 
-    const requestedFieldName = sanitizeFieldName(relation.foreignKeyFieldName)
-    const foreignKeyFieldName = requestedFieldName || toForeignKeyName(referencedEntity.name)
-    const ownerEntity = sanitizedEntities[ownerEntityIndex]
-    const existingField = ownerEntity.fields.find((field) => field.name === foreignKeyFieldName)
+    const requestedFieldName = sanitizeFieldName(relation.foreignKeyFieldName);
+    const foreignKeyFieldName =
+      requestedFieldName || toForeignKeyName(referencedEntity.name);
+    const ownerEntity = sanitizedEntities[ownerEntityIndex];
+    const existingField = ownerEntity.fields.find(
+      (field) => field.name === foreignKeyFieldName,
+    );
 
     sanitizedEntities[ownerEntityIndex] = {
       ...ownerEntity,
@@ -4108,7 +4422,7 @@ function normalizeAiErdDraft(aiEntities: ErdEntity[], aiRelations: ErdRelation[]
               referencesEntityId: referencedEntityId,
             },
           ],
-    }
+    };
 
     validRelations.push({
       id: relation.id || `rel_${sourceId}_${targetId}_${index}`,
@@ -4119,21 +4433,21 @@ function normalizeAiErdDraft(aiEntities: ErdEntity[], aiRelations: ErdRelation[]
       direction: relation.direction === 'one-way' ? 'one-way' : 'two-way',
       foreignKeyOwnerId,
       foreignKeyFieldName,
-    })
+    });
 
-    return validRelations
-  }
+    return validRelations;
+  };
 
-  const relations = aiRelations.reduce<ErdRelation[]>(addRelation, [])
+  const relations = aiRelations.reduce<ErdRelation[]>(addRelation, []);
 
   sanitizedEntities.forEach((entity) => {
     entity.fields.forEach((field, fieldIndex) => {
       const referencedEntityId =
         resolveEntityId(field.referencesEntityId) ||
-        inferReferencedEntityIdFromField(field.name, entity.id)
+        inferReferencedEntityIdFromField(field.name, entity.id);
 
       if (!referencedEntityId || referencedEntityId === entity.id) {
-        return
+        return;
       }
 
       addRelation(
@@ -4149,83 +4463,111 @@ function normalizeAiErdDraft(aiEntities: ErdEntity[], aiRelations: ErdRelation[]
           foreignKeyFieldName: field.name,
         },
         aiRelations.length + fieldIndex,
-      )
-    })
-  })
+      );
+    });
+  });
 
   const relationForeignKeys = new Set(
-    relations.map((relation) => `${relation.foreignKeyOwnerId}:${relation.foreignKeyFieldName}`),
-  )
+    relations.map(
+      (relation) =>
+        `${relation.foreignKeyOwnerId}:${relation.foreignKeyFieldName}`,
+    ),
+  );
 
   return {
     entities: sanitizedEntities.map((entity) => ({
       ...entity,
       fields: entity.fields.map((field): ErdField => {
-        if (!field.isForeignKey || relationForeignKeys.has(`${entity.id}:${field.name}`)) {
-          return field
+        if (
+          !field.isForeignKey ||
+          relationForeignKeys.has(`${entity.id}:${field.name}`)
+        ) {
+          return field;
         }
 
-        const { isForeignKey, referencesEntityId: _referencesEntityId, ...plainField } = field
-        return plainField
+        const {
+          isForeignKey,
+          referencesEntityId: _referencesEntityId,
+          ...plainField
+        } = field;
+        return plainField;
       }),
     })),
     relations,
-  }
+  };
 
-  function inferReferencedEntityIdFromField(fieldName: string, ownerEntityId: string) {
-    const normalizedField = normalizeId(fieldName)
+  function inferReferencedEntityIdFromField(
+    fieldName: string,
+    ownerEntityId: string,
+  ) {
+    const normalizedField = normalizeId(fieldName);
 
     if (!normalizedField.endsWith('_id') && !normalizedField.endsWith('id')) {
-      return ''
+      return '';
     }
 
-    const baseName = normalizedField.replace(/_?id$/, '')
+    const baseName = normalizedField.replace(/_?id$/, '');
 
     if (!baseName || baseName === ownerEntityId) {
-      return ''
+      return '';
     }
 
-    return entityLookup.get(baseName) ?? ''
+    return entityLookup.get(baseName) ?? '';
   }
 }
 
-function normalizeAiOperations(aiOperations: BackendOperation[], entities: ErdEntity[]) {
-  const entityById = new Map(entities.map((entity) => [entity.id, entity]))
+function normalizeAiOperations(
+  aiOperations: BackendOperation[],
+  entities: ErdEntity[],
+) {
+  const entityById = new Map(entities.map((entity) => [entity.id, entity]));
 
   return aiOperations
     .filter((operation) => entityById.has(operation.entityId))
     .map((operation, index) => {
-      const entity = entityById.get(operation.entityId)
-      const fieldIds = new Set(entity?.fields.map((field) => field.id) ?? [])
+      const entity = entityById.get(operation.entityId);
+      const fieldIds = new Set(entity?.fields.map((field) => field.id) ?? []);
       const writableFieldIds =
-        entity?.fields.filter((field) => !field.isPrimaryKey).map((field) => field.id) ?? []
-      const responseFieldIds = entity?.fields.map((field) => field.id) ?? []
+        entity?.fields
+          .filter((field) => !field.isPrimaryKey)
+          .map((field) => field.id) ?? [];
+      const responseFieldIds = entity?.fields.map((field) => field.id) ?? [];
 
       return {
         id: operation.id || `${operation.entityId}_ai_${index}`,
         entityId: operation.entityId,
-        kind: (operation.kind === 'custom' ? 'custom' : 'crud') as OperationKind,
+        kind: (operation.kind === 'custom'
+          ? 'custom'
+          : 'crud') as OperationKind,
         label: operation.label || `Operation ${index + 1}`,
-        method: httpMethods.includes(operation.method) ? operation.method : 'GET',
-        path: operation.path || `/${toRouteSegment(entity?.name ?? operation.entityId)}`,
+        method: httpMethods.includes(operation.method)
+          ? operation.method
+          : 'GET',
+        path:
+          operation.path ||
+          `/${toRouteSegment(entity?.name ?? operation.entityId)}`,
         enabled: operation.enabled !== false,
-        payloadFieldIds: (operation.payloadFieldIds ?? writableFieldIds).filter((fieldId) =>
-          fieldIds.has(fieldId),
+        payloadFieldIds: (operation.payloadFieldIds ?? writableFieldIds).filter(
+          (fieldId) => fieldIds.has(fieldId),
         ),
         requestFieldIds: (
           operation.requestFieldIds ??
           operation.payloadFieldIds ??
           writableFieldIds
         ).filter((fieldId) => fieldIds.has(fieldId)),
-        responseFieldIds: (operation.responseFieldIds ?? responseFieldIds).filter((fieldId) =>
-          fieldIds.has(fieldId),
+        responseFieldIds: (
+          operation.responseFieldIds ?? responseFieldIds
+        ).filter((fieldId) => fieldIds.has(fieldId)),
+        requestCustomFields: normalizeCustomFields(
+          operation.requestCustomFields ?? [],
         ),
-        requestCustomFields: normalizeCustomFields(operation.requestCustomFields ?? []),
-        responseCustomFields: normalizeCustomFields(operation.responseCustomFields ?? []),
+        responseCustomFields: normalizeCustomFields(
+          operation.responseCustomFields ?? [],
+        ),
         description: operation.description || '',
         requirements: operation.requirements || '',
-      }
-    })
+      };
+    });
 }
 
 function normalizeCustomFields(fields: OperationCustomField[]) {
@@ -4235,19 +4577,19 @@ function normalizeCustomFields(fields: OperationCustomField[]) {
       id: field.id || `custom_${index}_${normalizeId(field.name)}`,
       name: field.name.trim(),
       type: field.type?.trim() || 'string',
-    }))
+    }));
 }
 
 function sanitizeFieldName(value?: string) {
   const sanitized = String(value ?? '')
     .trim()
-    .replace(/[^a-zA-Z0-9_]/g, '')
+    .replace(/[^a-zA-Z0-9_]/g, '');
 
   if (!sanitized || /^\d/.test(sanitized)) {
-    return ''
+    return '';
   }
 
-  return sanitized
+  return sanitized;
 }
 
 function normalizeId(value: string) {
@@ -4256,7 +4598,7 @@ function normalizeId(value: string) {
     .replace(/([a-z])([A-Z])/g, '$1_$2')
     .replace(/[^a-zA-Z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '')
-    .toLowerCase()
+    .toLowerCase();
 }
 
 function toPascalLabel(value: string) {
@@ -4264,7 +4606,7 @@ function toPascalLabel(value: string) {
     .split(/[_\s-]+/)
     .filter(Boolean)
     .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
-    .join('')
+    .join('');
 }
 
 function ErdStep({
@@ -4273,112 +4615,138 @@ function ErdStep({
   onChangeEntities,
   onChangeRelations,
 }: {
-  entities: ErdEntity[]
-  relations: ErdRelation[]
-  onChangeEntities: (entities: ErdEntity[]) => void
-  onChangeRelations: (relations: ErdRelation[]) => void
+  entities: ErdEntity[];
+  relations: ErdRelation[];
+  onChangeEntities: (entities: ErdEntity[]) => void;
+  onChangeRelations: (relations: ErdRelation[]) => void;
 }) {
-  const { t } = useI18n()
-  const canvasRef = useRef<HTMLElement | null>(null)
+  const { t } = useI18n();
+  const canvasRef = useRef<HTMLElement | null>(null);
   const dragStateRef = useRef<{
-    entityId: string
-    offsetX: number
-    offsetY: number
-  } | null>(null)
+    entityId: string;
+    offsetX: number;
+    offsetY: number;
+  } | null>(null);
   const panStateRef = useRef<{
-    pointerId: number
-    startClientX: number
-    startClientY: number
-    startPanX: number
-    startPanY: number
-    moved: boolean
-  } | null>(null)
-  const [canvasPan, setCanvasPan] = useState({ x: 0, y: 0 })
-  const [canvasZoom, setCanvasZoom] = useState(1)
-  const [selectedEntityId, setSelectedEntityId] = useState(entities[0]?.id ?? '')
+    pointerId: number;
+    startClientX: number;
+    startClientY: number;
+    startPanX: number;
+    startPanY: number;
+    moved: boolean;
+  } | null>(null);
+  const [canvasPan, setCanvasPan] = useState({ x: 0, y: 0 });
+  const [canvasZoom, setCanvasZoom] = useState(1);
+  const [selectedEntityId, setSelectedEntityId] = useState(
+    entities[0]?.id ?? '',
+  );
   const [relationDraft, setRelationDraft] = useState<{
-    sourceCardinality: Cardinality
-    direction: RelationDirection
-    targetIds: string[]
+    sourceCardinality: Cardinality;
+    direction: RelationDirection;
+    targetIds: string[];
   }>({
     sourceCardinality: '1',
     direction: 'two-way',
     targetIds: [],
-  })
+  });
 
   function setEntities(
     nextEntities: ErdEntity[] | ((currentEntities: ErdEntity[]) => ErdEntity[]),
   ) {
-    onChangeEntities(typeof nextEntities === 'function' ? nextEntities(entities) : nextEntities)
+    onChangeEntities(
+      typeof nextEntities === 'function'
+        ? nextEntities(entities)
+        : nextEntities,
+    );
   }
 
   function setRelations(
-    nextRelations: ErdRelation[] | ((currentRelations: ErdRelation[]) => ErdRelation[]),
+    nextRelations:
+      ErdRelation[] | ((currentRelations: ErdRelation[]) => ErdRelation[]),
   ) {
     onChangeRelations(
-      typeof nextRelations === 'function' ? nextRelations(relations) : nextRelations,
-    )
+      typeof nextRelations === 'function'
+        ? nextRelations(relations)
+        : nextRelations,
+    );
   }
 
-  const selectedEntity = entities.find((entity) => entity.id === selectedEntityId)
-  const availableTargets = entities.filter((entity) => entity.id !== selectedEntityId)
-  const totalColumns = entities.reduce((sum, entity) => sum + entity.fields.length, 0)
+  const selectedEntity = entities.find(
+    (entity) => entity.id === selectedEntityId,
+  );
+  const availableTargets = entities.filter(
+    (entity) => entity.id !== selectedEntityId,
+  );
+  const totalColumns = entities.reduce(
+    (sum, entity) => sum + entity.fields.length,
+    0,
+  );
   const missingPrimaryKeys = entities.filter(
     (entity) => !entity.fields.some((field) => field.isPrimaryKey),
-  )
-  const inferredTargetCardinality: Cardinality = relationDraft.targetIds.length > 1 ? 'N' : '1'
-  const scaledGridSize = erdGridSize * canvasZoom
-  const gridOffsetX = ((canvasPan.x % scaledGridSize) + scaledGridSize) % scaledGridSize
-  const gridOffsetY = ((canvasPan.y % scaledGridSize) + scaledGridSize) % scaledGridSize
+  );
+  const inferredTargetCardinality: Cardinality =
+    relationDraft.targetIds.length > 1 ? 'N' : '1';
+  const scaledGridSize = erdGridSize * canvasZoom;
+  const gridOffsetX =
+    ((canvasPan.x % scaledGridSize) + scaledGridSize) % scaledGridSize;
+  const gridOffsetY =
+    ((canvasPan.y % scaledGridSize) + scaledGridSize) % scaledGridSize;
   const canvasStyle = {
     '--erd-grid-size': `${scaledGridSize}px`,
     '--erd-grid-offset-x': `${gridOffsetX}px`,
     '--erd-grid-offset-y': `${gridOffsetY}px`,
-  } as CSSProperties
-  const selectedEntityPosition = selectedEntity ? getEntityWorldPosition(selectedEntity) : null
+  } as CSSProperties;
+  const selectedEntityPosition = selectedEntity
+    ? getEntityWorldPosition(selectedEntity)
+    : null;
   const relationBuilderStyle = selectedEntity
     ? {
         left: `${selectedEntityPosition?.x ?? 0}px`,
         top: `${Math.max(96, selectedEntityPosition?.y ?? 0)}px`,
       }
-    : undefined
+    : undefined;
 
   useEffect(() => {
     function handleWindowMouseMove(event: MouseEvent) {
-      const canvas = canvasRef.current
-      const dragState = dragStateRef.current
+      const canvas = canvasRef.current;
+      const dragState = dragStateRef.current;
 
       if (!canvas || !dragState) {
-        return
+        return;
       }
 
-      const pointer = getWorldPoint(event.clientX, event.clientY)
+      const pointer = getWorldPoint(event.clientX, event.clientY);
 
-      moveEntity(dragState.entityId, pointer.x - dragState.offsetX, pointer.y - dragState.offsetY)
+      moveEntity(
+        dragState.entityId,
+        pointer.x - dragState.offsetX,
+        pointer.y - dragState.offsetY,
+      );
     }
 
     function handleWindowMouseUp() {
-      dragStateRef.current = null
+      dragStateRef.current = null;
     }
 
-    window.addEventListener('mousemove', handleWindowMouseMove)
-    window.addEventListener('mouseup', handleWindowMouseUp)
+    window.addEventListener('mousemove', handleWindowMouseMove);
+    window.addEventListener('mouseup', handleWindowMouseUp);
 
     return () => {
-      window.removeEventListener('mousemove', handleWindowMouseMove)
-      window.removeEventListener('mouseup', handleWindowMouseUp)
-    }
-  })
+      window.removeEventListener('mousemove', handleWindowMouseMove);
+      window.removeEventListener('mouseup', handleWindowMouseUp);
+    };
+  });
 
   function addEntity() {
-    const nextIndex = entities.length + 1
-    const id = `entity_${Date.now()}`
+    const nextIndex = entities.length + 1;
+    const id = `entity_${Date.now()}`;
     const viewportCenter = getWorldPoint(
       (canvasRef.current?.getBoundingClientRect().left ?? 0) +
         (canvasRef.current?.getBoundingClientRect().width ?? erdWorldWidth) / 2,
       (canvasRef.current?.getBoundingClientRect().top ?? 0) +
-        (canvasRef.current?.getBoundingClientRect().height ?? erdWorldHeight) / 2,
-    )
+        (canvasRef.current?.getBoundingClientRect().height ?? erdWorldHeight) /
+          2,
+    );
     setEntities((currentEntities) => [
       ...currentEntities,
       {
@@ -4396,9 +4764,9 @@ function ErdStep({
           },
         ],
       },
-    ])
-    setSelectedEntityId(id)
-    setRelationDraft((currentDraft) => ({ ...currentDraft, targetIds: [] }))
+    ]);
+    setSelectedEntityId(id);
+    setRelationDraft((currentDraft) => ({ ...currentDraft, targetIds: [] }));
   }
 
   function updateEntity(entityId: string, updates: Partial<ErdEntity>) {
@@ -4406,125 +4774,144 @@ function ErdStep({
       currentEntities.map((entity) =>
         entity.id === entityId ? { ...entity, ...updates } : entity,
       ),
-    )
+    );
   }
 
   function moveEntity(entityId: string, x: number, y: number) {
     updateEntity(entityId, {
       x: Math.max(0, Math.min(erdWorldWidth - erdEntityWidth, x)),
       y: Math.max(0, Math.min(erdWorldHeight - 120, y)),
-    })
+    });
   }
 
   function clampZoom(zoom: number) {
-    return Math.max(erdMinZoom, Math.min(erdMaxZoom, zoom))
+    return Math.max(erdMinZoom, Math.min(erdMaxZoom, zoom));
   }
 
-  function zoomCanvas(nextZoom: number, anchorClientX?: number, anchorClientY?: number) {
-    const canvas = canvasRef.current
-    const zoom = clampZoom(nextZoom)
+  function zoomCanvas(
+    nextZoom: number,
+    anchorClientX?: number,
+    anchorClientY?: number,
+  ) {
+    const canvas = canvasRef.current;
+    const zoom = clampZoom(nextZoom);
 
     if (!canvas || zoom === canvasZoom) {
-      setCanvasZoom(zoom)
-      return
+      setCanvasZoom(zoom);
+      return;
     }
 
-    const canvasRect = canvas.getBoundingClientRect()
-    const anchorX = anchorClientX ?? canvasRect.left + canvasRect.width / 2
-    const anchorY = anchorClientY ?? canvasRect.top + canvasRect.height / 2
-    const worldAnchor = getWorldPoint(anchorX, anchorY)
+    const canvasRect = canvas.getBoundingClientRect();
+    const anchorX = anchorClientX ?? canvasRect.left + canvasRect.width / 2;
+    const anchorY = anchorClientY ?? canvasRect.top + canvasRect.height / 2;
+    const worldAnchor = getWorldPoint(anchorX, anchorY);
 
-    setCanvasZoom(zoom)
+    setCanvasZoom(zoom);
     setCanvasPan({
       x: anchorX - canvasRect.left - worldAnchor.x * zoom,
       y: anchorY - canvasRect.top - worldAnchor.y * zoom,
-    })
+    });
   }
 
   function resetCanvasView() {
-    setCanvasZoom(1)
-    setCanvasPan({ x: 0, y: 0 })
+    setCanvasZoom(1);
+    setCanvasPan({ x: 0, y: 0 });
   }
 
   function getEntityWorldPosition(entity: ErdEntity) {
     return {
       x: entity.x,
       y: entity.y,
-    }
+    };
   }
 
   function getWorldPoint(clientX: number, clientY: number) {
-    const canvas = canvasRef.current
+    const canvas = canvasRef.current;
 
     if (!canvas) {
       return {
         x: (clientX - canvasPan.x) / canvasZoom,
         y: (clientY - canvasPan.y) / canvasZoom,
-      }
+      };
     }
 
-    const canvasRect = canvas.getBoundingClientRect()
+    const canvasRect = canvas.getBoundingClientRect();
 
     return {
       x: (clientX - canvasRect.left - canvasPan.x) / canvasZoom,
       y: (clientY - canvasRect.top - canvasPan.y) / canvasZoom,
-    }
+    };
   }
 
   function startEntityDrag(entityId: string, clientX: number, clientY: number) {
-    const canvas = canvasRef.current
+    const canvas = canvasRef.current;
 
     if (!canvas) {
-      return
+      return;
     }
 
-    const entity = entities.find((currentEntity) => currentEntity.id === entityId)
+    const entity = entities.find(
+      (currentEntity) => currentEntity.id === entityId,
+    );
 
     if (!entity) {
-      return
+      return;
     }
 
-    const pointer = getWorldPoint(clientX, clientY)
-    const entityPosition = getEntityWorldPosition(entity)
+    const pointer = getWorldPoint(clientX, clientY);
+    const entityPosition = getEntityWorldPosition(entity);
 
     dragStateRef.current = {
       entityId,
       offsetX: pointer.x - entityPosition.x,
       offsetY: pointer.y - entityPosition.y,
-    }
-    setSelectedEntityId(entityId)
+    };
+    setSelectedEntityId(entityId);
   }
 
-  function handleEntityDragStart(entityId: string, event: PointerEvent<HTMLElement>) {
-    startEntityDrag(entityId, event.clientX, event.clientY)
-    event.preventDefault()
-    event.stopPropagation()
-    event.currentTarget.setPointerCapture(event.pointerId)
+  function handleEntityDragStart(
+    entityId: string,
+    event: PointerEvent<HTMLElement>,
+  ) {
+    startEntityDrag(entityId, event.clientX, event.clientY);
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
   }
 
-  function handleEntityDrag(entityId: string, event: PointerEvent<HTMLElement>) {
-    const canvas = canvasRef.current
-    const dragState = dragStateRef.current
+  function handleEntityDrag(
+    entityId: string,
+    event: PointerEvent<HTMLElement>,
+  ) {
+    const canvas = canvasRef.current;
+    const dragState = dragStateRef.current;
 
     if (!canvas || !dragState || dragState.entityId !== entityId) {
-      return
+      return;
     }
 
-    const pointer = getWorldPoint(event.clientX, event.clientY)
+    const pointer = getWorldPoint(event.clientX, event.clientY);
 
-    event.stopPropagation()
-    moveEntity(entityId, pointer.x - dragState.offsetX, pointer.y - dragState.offsetY)
+    event.stopPropagation();
+    moveEntity(
+      entityId,
+      pointer.x - dragState.offsetX,
+      pointer.y - dragState.offsetY,
+    );
   }
 
-  function handleEntityDragEnd(entityId: string, event: PointerEvent<HTMLElement>) {
-    event.stopPropagation()
+  function handleEntityDragEnd(
+    entityId: string,
+    event: PointerEvent<HTMLElement>,
+  ) {
+    event.stopPropagation();
 
     if (dragStateRef.current?.entityId === entityId) {
-      dragStateRef.current = null
+      dragStateRef.current = null;
     }
 
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId)
+      event.currentTarget.releasePointerCapture(event.pointerId);
     }
   }
 
@@ -4547,10 +4934,14 @@ function ErdStep({
             }
           : entity,
       ),
-    )
+    );
   }
 
-  function updateField(entityId: string, fieldId: string, updates: Partial<ErdField>) {
+  function updateField(
+    entityId: string,
+    fieldId: string,
+    updates: Partial<ErdField>,
+  ) {
     setEntities((currentEntities) =>
       currentEntities.map((entity) =>
         entity.id === entityId
@@ -4562,70 +4953,86 @@ function ErdStep({
             }
           : entity,
       ),
-    )
+    );
   }
 
   function deleteField(entityId: string, fieldId: string) {
     const field = entities
       .find((entity) => entity.id === entityId)
-      ?.fields.find((currentField) => currentField.id === fieldId)
+      ?.fields.find((currentField) => currentField.id === fieldId);
 
     setEntities((currentEntities) =>
       currentEntities.map((entity) =>
         entity.id === entityId
           ? {
               ...entity,
-              fields: entity.fields.filter((currentField) => currentField.id !== fieldId),
+              fields: entity.fields.filter(
+                (currentField) => currentField.id !== fieldId,
+              ),
             }
           : entity,
       ),
-    )
+    );
 
     if (field?.isForeignKey) {
       setRelations((currentRelations) =>
         currentRelations.filter(
           (relation) =>
             !(
-              relation.foreignKeyOwnerId === entityId && relation.foreignKeyFieldName === field.name
+              relation.foreignKeyOwnerId === entityId &&
+              relation.foreignKeyFieldName === field.name
             ),
         ),
-      )
+      );
     }
   }
 
   function deleteEntity(entityId: string) {
-    const nextEntities = entities.filter((entity) => entity.id !== entityId)
+    const nextEntities = entities.filter((entity) => entity.id !== entityId);
     const nextSelectedEntityId =
-      selectedEntityId === entityId ? (nextEntities[0]?.id ?? '') : selectedEntityId
+      selectedEntityId === entityId
+        ? (nextEntities[0]?.id ?? '')
+        : selectedEntityId;
 
     setEntities(
       nextEntities.map((entity) => ({
         ...entity,
-        fields: entity.fields.filter((field) => field.referencesEntityId !== entityId),
+        fields: entity.fields.filter(
+          (field) => field.referencesEntityId !== entityId,
+        ),
       })),
-    )
+    );
     setRelations((currentRelations) =>
       currentRelations.filter(
-        (relation) => relation.sourceId !== entityId && relation.targetId !== entityId,
+        (relation) =>
+          relation.sourceId !== entityId && relation.targetId !== entityId,
       ),
-    )
-    setSelectedEntityId(nextSelectedEntityId)
+    );
+    setSelectedEntityId(nextSelectedEntityId);
     setRelationDraft((currentDraft) => ({
       ...currentDraft,
-      targetIds: currentDraft.targetIds.filter((targetId) => targetId !== entityId),
-    }))
+      targetIds: currentDraft.targetIds.filter(
+        (targetId) => targetId !== entityId,
+      ),
+    }));
   }
 
   function deleteRelation(relationId: string) {
-    const relation = relations.find((currentRelation) => currentRelation.id === relationId)
+    const relation = relations.find(
+      (currentRelation) => currentRelation.id === relationId,
+    );
 
     setRelations((currentRelations) =>
-      currentRelations.filter((currentRelation) => currentRelation.id !== relationId),
-    )
+      currentRelations.filter(
+        (currentRelation) => currentRelation.id !== relationId,
+      ),
+    );
 
     if (relation?.foreignKeyOwnerId && relation.foreignKeyFieldName) {
       const referencedEntityId =
-        relation.foreignKeyOwnerId === relation.sourceId ? relation.targetId : relation.sourceId
+        relation.foreignKeyOwnerId === relation.sourceId
+          ? relation.targetId
+          : relation.sourceId;
 
       setEntities((currentEntities) =>
         currentEntities.map((entity) =>
@@ -4643,7 +5050,7 @@ function ErdStep({
               }
             : entity,
         ),
-      )
+      );
     }
   }
 
@@ -4653,90 +5060,108 @@ function ErdStep({
       targetIds: currentDraft.targetIds.includes(targetId)
         ? currentDraft.targetIds.filter((id) => id !== targetId)
         : [...currentDraft.targetIds, targetId],
-    }))
+    }));
   }
 
   function createRelations() {
     if (!selectedEntity || relationDraft.targetIds.length === 0) {
-      return
+      return;
     }
 
-    const nextRelations: ErdRelation[] = relationDraft.targetIds.map((targetId) => {
-      const targetEntity = entities.find((entity) => entity.id === targetId)
-      const foreignKeyOwnerId =
-        relationDraft.sourceCardinality === 'N' ? selectedEntity.id : targetId
-      const parentEntity = relationDraft.sourceCardinality === 'N' ? targetEntity : selectedEntity
+    const nextRelations: ErdRelation[] = relationDraft.targetIds.map(
+      (targetId) => {
+        const targetEntity = entities.find((entity) => entity.id === targetId);
+        const foreignKeyOwnerId =
+          relationDraft.sourceCardinality === 'N'
+            ? selectedEntity.id
+            : targetId;
+        const parentEntity =
+          relationDraft.sourceCardinality === 'N'
+            ? targetEntity
+            : selectedEntity;
 
-      return {
-        id: `rel_${selectedEntity.id}_${targetId}_${Date.now()}`,
-        sourceId: selectedEntity.id,
-        targetId,
-        sourceCardinality: relationDraft.sourceCardinality,
-        targetCardinality: inferredTargetCardinality,
-        direction: relationDraft.direction,
-        foreignKeyOwnerId,
-        foreignKeyFieldName: parentEntity ? toForeignKeyName(parentEntity.name) : undefined,
-      }
-    })
+        return {
+          id: `rel_${selectedEntity.id}_${targetId}_${Date.now()}`,
+          sourceId: selectedEntity.id,
+          targetId,
+          sourceCardinality: relationDraft.sourceCardinality,
+          targetCardinality: inferredTargetCardinality,
+          direction: relationDraft.direction,
+          foreignKeyOwnerId,
+          foreignKeyFieldName: parentEntity
+            ? toForeignKeyName(parentEntity.name)
+            : undefined,
+        };
+      },
+    );
 
-    setRelations((currentRelations) => [...currentRelations, ...nextRelations])
+    setRelations((currentRelations) => [...currentRelations, ...nextRelations]);
     setEntities((currentEntities) =>
       currentEntities.map((entity) => {
-        const fieldsToAdd = nextRelations.reduce<ErdField[]>((fields, relation) => {
-          if (relation.sourceCardinality === 'N') {
-            if (entity.id !== relation.sourceId) {
-              return fields
+        const fieldsToAdd = nextRelations.reduce<ErdField[]>(
+          (fields, relation) => {
+            if (relation.sourceCardinality === 'N') {
+              if (entity.id !== relation.sourceId) {
+                return fields;
+              }
+            } else if (relation.targetCardinality === 'N') {
+              if (entity.id !== relation.targetId) {
+                return fields;
+              }
+            } else if (entity.id !== relation.targetId) {
+              return fields;
             }
-          } else if (relation.targetCardinality === 'N') {
-            if (entity.id !== relation.targetId) {
-              return fields
+
+            const parentEntity =
+              relation.sourceCardinality === 'N'
+                ? currentEntities.find(
+                    (candidate) => candidate.id === relation.targetId,
+                  )
+                : currentEntities.find(
+                    (candidate) => candidate.id === relation.sourceId,
+                  );
+
+            if (!parentEntity) {
+              return fields;
             }
-          } else if (entity.id !== relation.targetId) {
-            return fields
-          }
 
-          const parentEntity =
-            relation.sourceCardinality === 'N'
-              ? currentEntities.find((candidate) => candidate.id === relation.targetId)
-              : currentEntities.find((candidate) => candidate.id === relation.sourceId)
+            const fieldName = toForeignKeyName(parentEntity.name);
+            const alreadyExists = entity.fields.some(
+              (field) => field.name === fieldName,
+            );
 
-          if (!parentEntity) {
-            return fields
-          }
+            if (alreadyExists) {
+              return fields;
+            }
 
-          const fieldName = toForeignKeyName(parentEntity.name)
-          const alreadyExists = entity.fields.some((field) => field.name === fieldName)
+            fields.push({
+              id: `${entity.id}_${fieldName}_${Date.now()}`,
+              name: fieldName,
+              type: 'uuid',
+              isPrimaryKey: false,
+              isNotNull: relation.targetCardinality === 'N',
+              isForeignKey: true,
+              referencesEntityId: parentEntity.id,
+            });
 
-          if (alreadyExists) {
-            return fields
-          }
-
-          fields.push({
-            id: `${entity.id}_${fieldName}_${Date.now()}`,
-            name: fieldName,
-            type: 'uuid',
-            isPrimaryKey: false,
-            isNotNull: relation.targetCardinality === 'N',
-            isForeignKey: true,
-            referencesEntityId: parentEntity.id,
-          })
-
-          return fields
-        }, [])
+            return fields;
+          },
+          [],
+        );
 
         return fieldsToAdd.length > 0
           ? {
               ...entity,
               fields: [...entity.fields, ...fieldsToAdd],
             }
-          : entity
+          : entity;
       }),
-    )
-    setRelationDraft((currentDraft) => ({ ...currentDraft, targetIds: [] }))
+    );
+    setRelationDraft((currentDraft) => ({ ...currentDraft, targetIds: [] }));
   }
 
   function clearSelectionFromCanvas(event: ReactMouseEvent<HTMLElement>) {
-    const target = event.target as HTMLElement
+    const target = event.target as HTMLElement;
 
     if (
       panStateRef.current?.moved ||
@@ -4744,22 +5169,22 @@ function ErdStep({
         '.entity-node, .relation-builder, .erd-toolbar, button, input, select, textarea, label',
       )
     ) {
-      return
+      return;
     }
 
-    setSelectedEntityId('')
-    setRelationDraft((currentDraft) => ({ ...currentDraft, targetIds: [] }))
+    setSelectedEntityId('');
+    setRelationDraft((currentDraft) => ({ ...currentDraft, targetIds: [] }));
   }
 
   function handleCanvasPointerDown(event: PointerEvent<HTMLElement>) {
-    const target = event.target as HTMLElement
+    const target = event.target as HTMLElement;
 
     if (
       target.closest(
         '.entity-node, .relation-builder, .erd-toolbar, button, input, select, textarea, label',
       )
     ) {
-      return
+      return;
     }
 
     panStateRef.current = {
@@ -4769,56 +5194,62 @@ function ErdStep({
       startPanX: canvasPan.x,
       startPanY: canvasPan.y,
       moved: false,
-    }
-    event.currentTarget.setPointerCapture(event.pointerId)
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
   }
 
   function handleCanvasPointerMove(event: PointerEvent<HTMLElement>) {
-    const panState = panStateRef.current
+    const panState = panStateRef.current;
 
     if (!panState || panState.pointerId !== event.pointerId) {
-      return
+      return;
     }
 
-    const deltaX = event.clientX - panState.startClientX
-    const deltaY = event.clientY - panState.startClientY
+    const deltaX = event.clientX - panState.startClientX;
+    const deltaY = event.clientY - panState.startClientY;
 
     if (Math.abs(deltaX) > 2 || Math.abs(deltaY) > 2) {
-      panState.moved = true
+      panState.moved = true;
     }
 
     setCanvasPan({
       x: panState.startPanX + deltaX,
       y: panState.startPanY + deltaY,
-    })
+    });
   }
 
   function handleCanvasPointerUp(event: PointerEvent<HTMLElement>) {
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId)
+      event.currentTarget.releasePointerCapture(event.pointerId);
     }
 
     window.setTimeout(() => {
-      panStateRef.current = null
-    }, 0)
+      panStateRef.current = null;
+    }, 0);
   }
 
   function handleCanvasWheel(event: ReactWheelEvent<HTMLElement>) {
-    const target = event.target as HTMLElement
+    const target = event.target as HTMLElement;
 
-    if (target.closest('.entity-node, .relation-builder, .erd-toolbar, input, select, textarea')) {
-      return
+    if (
+      target.closest(
+        '.entity-node, .relation-builder, .erd-toolbar, input, select, textarea',
+      )
+    ) {
+      return;
     }
 
-    event.preventDefault()
-    const zoomFactor = event.deltaY < 0 ? 1.08 : 0.92
-    zoomCanvas(canvasZoom * zoomFactor, event.clientX, event.clientY)
+    event.preventDefault();
+    const zoomFactor = event.deltaY < 0 ? 1.08 : 0.92;
+    zoomCanvas(canvasZoom * zoomFactor, event.clientX, event.clientY);
   }
 
   return (
     <div className="erd-layout">
       <section
-        className={panStateRef.current?.moved ? 'canvas-panel panning' : 'canvas-panel'}
+        className={
+          panStateRef.current?.moved ? 'canvas-panel panning' : 'canvas-panel'
+        }
         ref={canvasRef}
         style={canvasStyle}
         onClick={clearSelectionFromCanvas}
@@ -4840,7 +5271,11 @@ function ErdStep({
             >
               -
             </button>
-            <button type="button" title={t('erd.resetZoom')} onClick={resetCanvasView}>
+            <button
+              type="button"
+              title={t('erd.resetZoom')}
+              onClick={resetCanvasView}
+            >
               {Math.round(canvasZoom * 100)}%
             </button>
             <button
@@ -4862,7 +5297,10 @@ function ErdStep({
           }}
         >
           {selectedEntity ? (
-            <div className="relation-builder floating" style={relationBuilderStyle}>
+            <div
+              className="relation-builder floating"
+              style={relationBuilderStyle}
+            >
               <div className="relation-builder-header">
                 <span>{t('erd.relationFrom')}</span>
               </div>
@@ -4913,7 +5351,10 @@ function ErdStep({
               <div className="relation-builder-footer">
                 <span className="relation-hint">
                   {t('erd.opposite', {
-                    value: relationDraft.targetIds.length === 0 ? '?' : inferredTargetCardinality,
+                    value:
+                      relationDraft.targetIds.length === 0
+                        ? '?'
+                        : inferredTargetCardinality,
                   })}
                 </span>
                 <button
@@ -4955,27 +5396,35 @@ function ErdStep({
               </marker>
             </defs>
             {relations.map((relation) => {
-              const source = entities.find((entity) => entity.id === relation.sourceId)
-              const target = entities.find((entity) => entity.id === relation.targetId)
+              const source = entities.find(
+                (entity) => entity.id === relation.sourceId,
+              );
+              const target = entities.find(
+                (entity) => entity.id === relation.targetId,
+              );
 
               if (!source || !target) {
-                return null
+                return null;
               }
 
-              const sourcePosition = getEntityWorldPosition(source)
-              const targetPosition = getEntityWorldPosition(target)
-              const sourceX = sourcePosition.x + erdEntityAnchorX
-              const sourceY = sourcePosition.y + erdEntityAnchorY
-              const targetX = targetPosition.x + erdEntityAnchorX
-              const targetY = targetPosition.y + erdEntityAnchorY
-              const labelX = (sourceX + targetX) / 2
-              const labelY = (sourceY + targetY) / 2
+              const sourcePosition = getEntityWorldPosition(source);
+              const targetPosition = getEntityWorldPosition(target);
+              const sourceX = sourcePosition.x + erdEntityAnchorX;
+              const sourceY = sourcePosition.y + erdEntityAnchorY;
+              const targetX = targetPosition.x + erdEntityAnchorX;
+              const targetY = targetPosition.y + erdEntityAnchorY;
+              const labelX = (sourceX + targetX) / 2;
+              const labelY = (sourceY + targetY) / 2;
 
               return (
                 <g key={relation.id}>
                   <line
                     markerEnd="url(#arrow-end)"
-                    markerStart={relation.direction === 'two-way' ? 'url(#arrow-start)' : undefined}
+                    markerStart={
+                      relation.direction === 'two-way'
+                        ? 'url(#arrow-start)'
+                        : undefined
+                    }
                     x1={sourceX}
                     x2={targetX}
                     y1={sourceY}
@@ -4985,7 +5434,7 @@ function ErdStep({
                     {relation.sourceCardinality}:{relation.targetCardinality}
                   </text>
                 </g>
-              )
+              );
             })}
           </svg>
 
@@ -5039,27 +5488,35 @@ function ErdStep({
             <p className="muted-copy">{t('erd.noRelations')}</p>
           ) : (
             relations.map((relation) => {
-              const source = entities.find((entity) => entity.id === relation.sourceId)
-              const target = entities.find((entity) => entity.id === relation.targetId)
+              const source = entities.find(
+                (entity) => entity.id === relation.sourceId,
+              );
+              const target = entities.find(
+                (entity) => entity.id === relation.targetId,
+              );
 
               return (
                 <div className="relation-summary-row" key={relation.id}>
                   <span>
-                    {source?.name ?? t('erd.unknown')} {relation.sourceCardinality}:
-                    {relation.targetCardinality} {relation.direction === 'two-way' ? '<->' : '->'}{' '}
+                    {source?.name ?? t('erd.unknown')}{' '}
+                    {relation.sourceCardinality}:{relation.targetCardinality}{' '}
+                    {relation.direction === 'two-way' ? '<->' : '->'}{' '}
                     {target?.name ?? t('erd.unknown')}
                   </span>
-                  <button type="button" onClick={() => deleteRelation(relation.id)}>
+                  <button
+                    type="button"
+                    onClick={() => deleteRelation(relation.id)}
+                  >
                     {t('erd.delete')}
                   </button>
                 </div>
-              )
+              );
             })
           )}
         </div>
       </section>
     </div>
-  )
+  );
 }
 
 function EntityNode({
@@ -5076,20 +5533,24 @@ function EntityNode({
   onUpdateEntity,
   onUpdateField,
 }: {
-  entity: ErdEntity
-  position: { x: number; y: number }
-  isSelected: boolean
-  onAddField: (entityId: string) => void
-  onDeleteEntity: (entityId: string) => void
-  onDeleteField: (entityId: string, fieldId: string) => void
-  onDrag: (entityId: string, event: PointerEvent<HTMLElement>) => void
-  onDragEnd: (entityId: string, event: PointerEvent<HTMLElement>) => void
-  onDragStart: (entityId: string, event: PointerEvent<HTMLElement>) => void
-  onSelect: (entityId: string) => void
-  onUpdateEntity: (entityId: string, updates: Partial<ErdEntity>) => void
-  onUpdateField: (entityId: string, fieldId: string, updates: Partial<ErdField>) => void
+  entity: ErdEntity;
+  position: { x: number; y: number };
+  isSelected: boolean;
+  onAddField: (entityId: string) => void;
+  onDeleteEntity: (entityId: string) => void;
+  onDeleteField: (entityId: string, fieldId: string) => void;
+  onDrag: (entityId: string, event: PointerEvent<HTMLElement>) => void;
+  onDragEnd: (entityId: string, event: PointerEvent<HTMLElement>) => void;
+  onDragStart: (entityId: string, event: PointerEvent<HTMLElement>) => void;
+  onSelect: (entityId: string) => void;
+  onUpdateEntity: (entityId: string, updates: Partial<ErdEntity>) => void;
+  onUpdateField: (
+    entityId: string,
+    fieldId: string,
+    updates: Partial<ErdField>,
+  ) => void;
 }) {
-  const { t } = useI18n()
+  const { t } = useI18n();
 
   return (
     <div
@@ -5113,7 +5574,9 @@ function EntityNode({
           className="entity-name-input"
           placeholder={t('erd.entityPlaceholder')}
           value={entity.name}
-          onChange={(event) => onUpdateEntity(entity.id, { name: event.target.value })}
+          onChange={(event) =>
+            onUpdateEntity(entity.id, { name: event.target.value })
+          }
           onClick={(event) => event.stopPropagation()}
           onPointerDown={(event) => event.stopPropagation()}
         />
@@ -5121,8 +5584,8 @@ function EntityNode({
           className="entity-delete-button"
           type="button"
           onClick={(event) => {
-            event.stopPropagation()
-            onDeleteEntity(entity.id)
+            event.stopPropagation();
+            onDeleteEntity(entity.id);
           }}
           onPointerDown={(event) => event.stopPropagation()}
         >
@@ -5144,7 +5607,9 @@ function EntityNode({
               })}
               placeholder={t('erd.columnPlaceholder')}
               value={field.name}
-              onChange={(event) => onUpdateField(entity.id, field.id, { name: event.target.value })}
+              onChange={(event) =>
+                onUpdateField(entity.id, field.id, { name: event.target.value })
+              }
             />
             <select
               aria-label={t('erd.columnType', {
@@ -5187,7 +5652,11 @@ function EntityNode({
               />
               NN
             </label>
-            <span className={field.isForeignKey ? 'field-fk-badge' : 'field-fk-badge empty'}>
+            <span
+              className={
+                field.isForeignKey ? 'field-fk-badge' : 'field-fk-badge empty'
+              }
+            >
               {field.isForeignKey ? 'FK' : ''}
             </span>
             <button
@@ -5208,7 +5677,7 @@ function EntityNode({
         {t('erd.addColumn')}
       </button>
     </div>
-  )
+  );
 }
 
 function OperationsStep({
@@ -5216,44 +5685,62 @@ function OperationsStep({
   operations,
   onChangeOperations,
 }: {
-  entities: ErdEntity[]
-  operations: BackendOperation[]
-  onChangeOperations: (operations: BackendOperation[]) => void
+  entities: ErdEntity[];
+  operations: BackendOperation[];
+  onChangeOperations: (operations: BackendOperation[]) => void;
 }) {
-  const { t } = useI18n()
-  const [selectedEntityId, setSelectedEntityId] = useState(entities[0]?.id ?? '')
-  const [fieldTab, setFieldTab] = useState<'request' | 'response'>('request')
-  const selectedEntity = entities.find((entity) => entity.id === selectedEntityId) ?? entities[0]
+  const { t } = useI18n();
+  const [selectedEntityId, setSelectedEntityId] = useState(
+    entities[0]?.id ?? '',
+  );
+  const [fieldTab, setFieldTab] = useState<'request' | 'response'>('request');
+  const selectedEntity =
+    entities.find((entity) => entity.id === selectedEntityId) ?? entities[0];
   const selectedOperations = selectedEntity
     ? operations.filter((operation) => operation.entityId === selectedEntity.id)
-    : []
-  const enabledOperations = selectedOperations.filter((operation) => operation.enabled)
+    : [];
+  const enabledOperations = selectedOperations.filter(
+    (operation) => operation.enabled,
+  );
 
   useEffect(() => {
     if (!selectedEntityId && entities[0]) {
-      setSelectedEntityId(entities[0].id)
-      return
+      setSelectedEntityId(entities[0].id);
+      return;
     }
 
-    if (selectedEntityId && !entities.some((entity) => entity.id === selectedEntityId)) {
-      setSelectedEntityId(entities[0]?.id ?? '')
+    if (
+      selectedEntityId &&
+      !entities.some((entity) => entity.id === selectedEntityId)
+    ) {
+      setSelectedEntityId(entities[0]?.id ?? '');
     }
-  }, [entities, selectedEntityId])
+  }, [entities, selectedEntityId]);
 
-  function updateOperation(operationId: string, updates: Partial<BackendOperation>) {
+  function updateOperation(
+    operationId: string,
+    updates: Partial<BackendOperation>,
+  ) {
     onChangeOperations(
       operations.map((operation) =>
         operation.id === operationId ? { ...operation, ...updates } : operation,
       ),
-    )
+    );
   }
 
-  function selectedFieldIds(operation: BackendOperation, tab: 'request' | 'response') {
+  function selectedFieldIds(
+    operation: BackendOperation,
+    tab: 'request' | 'response',
+  ) {
     if (tab === 'request') {
-      return operation.requestFieldIds ?? operation.payloadFieldIds
+      return operation.requestFieldIds ?? operation.payloadFieldIds;
     }
 
-    return operation.responseFieldIds ?? selectedEntity?.fields.map((field) => field.id) ?? []
+    return (
+      operation.responseFieldIds ??
+      selectedEntity?.fields.map((field) => field.id) ??
+      []
+    );
   }
 
   function toggleOperationField(
@@ -5261,22 +5748,25 @@ function OperationsStep({
     fieldId: string,
     tab: 'request' | 'response',
   ) {
-    const currentFieldIds = selectedFieldIds(operation, tab)
+    const currentFieldIds = selectedFieldIds(operation, tab);
     const nextFieldIds = currentFieldIds.includes(fieldId)
       ? currentFieldIds.filter((currentFieldId) => currentFieldId !== fieldId)
-      : [...currentFieldIds, fieldId]
+      : [...currentFieldIds, fieldId];
 
     updateOperation(operation.id, {
       ...(tab === 'request'
         ? { requestFieldIds: nextFieldIds, payloadFieldIds: nextFieldIds }
         : { responseFieldIds: nextFieldIds }),
-    })
+    });
   }
 
-  function customFields(operation: BackendOperation, tab: 'request' | 'response') {
+  function customFields(
+    operation: BackendOperation,
+    tab: 'request' | 'response',
+  ) {
     return tab === 'request'
       ? (operation.requestCustomFields ?? [])
-      : (operation.responseCustomFields ?? [])
+      : (operation.responseCustomFields ?? []);
   }
 
   function updateCustomFields(
@@ -5285,12 +5775,17 @@ function OperationsStep({
     fields: OperationCustomField[],
   ) {
     updateOperation(operation.id, {
-      ...(tab === 'request' ? { requestCustomFields: fields } : { responseCustomFields: fields }),
-    })
+      ...(tab === 'request'
+        ? { requestCustomFields: fields }
+        : { responseCustomFields: fields }),
+    });
   }
 
-  function addCustomField(operation: BackendOperation, tab: 'request' | 'response') {
-    const fields = customFields(operation, tab)
+  function addCustomField(
+    operation: BackendOperation,
+    tab: 'request' | 'response',
+  ) {
+    const fields = customFields(operation, tab);
     updateCustomFields(operation, tab, [
       ...fields,
       {
@@ -5298,7 +5793,7 @@ function OperationsStep({
         name: '',
         type: 'string',
       },
-    ])
+    ]);
   }
 
   function updateCustomField(
@@ -5313,7 +5808,7 @@ function OperationsStep({
       customFields(operation, tab).map((field) =>
         field.id === fieldId ? { ...field, ...updates } : field,
       ),
-    )
+    );
   }
 
   function deleteCustomField(
@@ -5325,12 +5820,12 @@ function OperationsStep({
       operation,
       tab,
       customFields(operation, tab).filter((field) => field.id !== fieldId),
-    )
+    );
   }
 
   function addCustomOperation() {
     if (!selectedEntity) {
-      return
+      return;
     }
 
     onChangeOperations([
@@ -5355,11 +5850,13 @@ function OperationsStep({
         description: '',
         requirements: '',
       },
-    ])
+    ]);
   }
 
   function deleteCustomOperation(operationId: string) {
-    onChangeOperations(operations.filter((operation) => operation.id !== operationId))
+    onChangeOperations(
+      operations.filter((operation) => operation.id !== operationId),
+    );
   }
 
   return (
@@ -5367,7 +5864,9 @@ function OperationsStep({
       <section className="flow-panel entity-operation-list">
         <div className="section-heading">
           <h3>{t('dashboard.entities')}</h3>
-          <span className="autosave-pill">{t('ops.mapped', { count: entities.length })}</span>
+          <span className="autosave-pill">
+            {t('ops.mapped', { count: entities.length })}
+          </span>
         </div>
         <p className="entity-scroll-hint">
           <i aria-hidden="true">↔</i>
@@ -5385,7 +5884,8 @@ function OperationsStep({
               <span>
                 {t('ops.count', {
                   count: operations.filter(
-                    (operation) => operation.entityId === entity.id && operation.enabled,
+                    (operation) =>
+                      operation.entityId === entity.id && operation.enabled,
                   ).length,
                 })}
               </span>
@@ -5401,7 +5901,11 @@ function OperationsStep({
               ? t('ops.entityOperations', { entity: selectedEntity.name })
               : t('ops.operations')}
           </h3>
-          <button type="button" onClick={addCustomOperation} disabled={!selectedEntity}>
+          <button
+            type="button"
+            onClick={addCustomOperation}
+            disabled={!selectedEntity}
+          >
             {t('ops.addCustom')}
           </button>
         </div>
@@ -5420,10 +5924,15 @@ function OperationsStep({
                         })
                       }
                     />
-                    <span>{operation.kind === 'crud' ? 'CRUD' : t('ops.custom')}</span>
+                    <span>
+                      {operation.kind === 'crud' ? 'CRUD' : t('ops.custom')}
+                    </span>
                   </label>
                   {operation.kind === 'custom' ? (
-                    <button type="button" onClick={() => deleteCustomOperation(operation.id)}>
+                    <button
+                      type="button"
+                      onClick={() => deleteCustomOperation(operation.id)}
+                    >
                       {t('erd.delete')}
                     </button>
                   ) : null}
@@ -5519,9 +6028,13 @@ function OperationsStep({
                   {selectedEntity.fields.map((field) => (
                     <label key={field.id}>
                       <input
-                        checked={selectedFieldIds(operation, fieldTab).includes(field.id)}
+                        checked={selectedFieldIds(operation, fieldTab).includes(
+                          field.id,
+                        )}
                         type="checkbox"
-                        onChange={() => toggleOperationField(operation, field.id, fieldTab)}
+                        onChange={() =>
+                          toggleOperationField(operation, field.id, fieldTab)
+                        }
                       />
                       {field.name}
                       <em>{field.type}</em>
@@ -5530,7 +6043,10 @@ function OperationsStep({
                   <div className="custom-field-editor">
                     <div className="custom-field-heading">
                       <span>{t('ops.customFields')}</span>
-                      <button type="button" onClick={() => addCustomField(operation, fieldTab)}>
+                      <button
+                        type="button"
+                        onClick={() => addCustomField(operation, fieldTab)}
+                      >
                         {t('ops.addField')}
                       </button>
                     </div>
@@ -5563,7 +6079,9 @@ function OperationsStep({
                         </select>
                         <button
                           type="button"
-                          onClick={() => deleteCustomField(operation, fieldTab, field.id)}
+                          onClick={() =>
+                            deleteCustomField(operation, fieldTab, field.id)
+                          }
                         >
                           {t('erd.delete')}
                         </button>
@@ -5598,16 +6116,20 @@ function OperationsStep({
                   </>
                 ) : null}
                 <span>{t('ops.request')}</span>
-                <code>{formatFieldPreview(selectedEntity, operation, 'request')}</code>
+                <code>
+                  {formatFieldPreview(selectedEntity, operation, 'request')}
+                </code>
                 <span>{t('ops.response')}</span>
-                <code>{formatFieldPreview(selectedEntity, operation, 'response')}</code>
+                <code>
+                  {formatFieldPreview(selectedEntity, operation, 'response')}
+                </code>
               </div>
             ))
           )}
         </div>
       </section>
     </div>
-  )
+  );
 }
 
 function formatFieldPreview(
@@ -5618,28 +6140,32 @@ function formatFieldPreview(
   const fieldIds =
     direction === 'request'
       ? (operation.requestFieldIds ?? operation.payloadFieldIds)
-      : (operation.responseFieldIds ?? entity?.fields.map((field) => field.id) ?? [])
+      : (operation.responseFieldIds ??
+        entity?.fields.map((field) => field.id) ??
+        []);
 
   if (!entity || fieldIds.length === 0) {
     const customOnlyPayload = (
       direction === 'request'
         ? (operation.requestCustomFields ?? [])
         : (operation.responseCustomFields ?? [])
-    ).map((field) => `  "${field.name}": "${field.type}"`)
+    ).map((field) => `  "${field.name}": "${field.type}"`);
 
-    return customOnlyPayload.length > 0 ? `{\n${customOnlyPayload.join(',\n')}\n}` : '{}'
+    return customOnlyPayload.length > 0
+      ? `{\n${customOnlyPayload.join(',\n')}\n}`
+      : '{}';
   }
 
   const payload = entity.fields
     .filter((field) => fieldIds.includes(field.id))
-    .map((field) => `  "${field.name}": "${field.type}"`)
+    .map((field) => `  "${field.name}": "${field.type}"`);
   const customPayload = (
     direction === 'request'
       ? (operation.requestCustomFields ?? [])
       : (operation.responseCustomFields ?? [])
-  ).map((field) => `  "${field.name}": "${field.type}"`)
+  ).map((field) => `  "${field.name}": "${field.type}"`);
 
-  return `{\n${[...payload, ...customPayload].join(',\n')}\n}`
+  return `{\n${[...payload, ...customPayload].join(',\n')}\n}`;
 }
 
 function GenerateStep({
@@ -5655,81 +6181,112 @@ function GenerateStep({
   onNestJsResultChange,
   onWorkspaceChange,
 }: {
-  draftProject: DraftProject
-  entities: ErdEntity[]
-  initialAgentResult: NestJsAgentResult | null
-  initialWorkspace: GenerateWorkspace | null
-  relations: ErdRelation[]
-  operations: BackendOperation[]
-  authFetch: AuthFetch
-  token: string | null
-  onNestJsAppReadyChange: (isReady: boolean) => void
-  onNestJsResultChange: (result: NestJsAgentResult | null) => void
-  onWorkspaceChange: (workspace: GenerateWorkspace | null) => void
+  draftProject: DraftProject;
+  entities: ErdEntity[];
+  initialAgentResult: NestJsAgentResult | null;
+  initialWorkspace: GenerateWorkspace | null;
+  relations: ErdRelation[];
+  operations: BackendOperation[];
+  authFetch: AuthFetch;
+  token: string | null;
+  onNestJsAppReadyChange: (isReady: boolean) => void;
+  onNestJsResultChange: (result: NestJsAgentResult | null) => void;
+  onWorkspaceChange: (workspace: GenerateWorkspace | null) => void;
 }) {
-  const { t } = useI18n()
-  const hasRequestedWorkspace = useRef(Boolean(initialWorkspace))
-  const [workspace, setWorkspace] = useState<GenerateWorkspace | null>(initialWorkspace)
-  const [agentResult, setAgentResult] = useState<NestJsAgentResult | null>(initialAgentResult)
-  const [isGeneratingWorkspace, setIsGeneratingWorkspace] = useState(false)
-  const [isRunningAgent, setIsRunningAgent] = useState(false)
-  const [generateError, setGenerateError] = useState<string | null>(null)
-  const [terminalLines, setTerminalLines] = useState<TerminalLogLine[]>([])
-  const terminalRef = useRef<HTMLDivElement | null>(null)
-  const enabledOperations = operations.filter((operation) => operation.enabled)
-  const hasExistingBuild = agentResult?.build?.success === true
+  const { t } = useI18n();
+  const hasRequestedWorkspace = useRef(Boolean(initialWorkspace));
+  const [workspace, setWorkspace] = useState<GenerateWorkspace | null>(
+    initialWorkspace,
+  );
+  const [agentResult, setAgentResult] = useState<NestJsAgentResult | null>(
+    initialAgentResult,
+  );
+  const [isGeneratingWorkspace, setIsGeneratingWorkspace] = useState(false);
+  const [isRunningAgent, setIsRunningAgent] = useState(false);
+  const [generateError, setGenerateError] = useState<string | null>(null);
+  const [terminalLines, setTerminalLines] = useState<TerminalLogLine[]>([]);
+  const terminalRef = useRef<HTMLDivElement | null>(null);
+  const enabledOperations = operations.filter((operation) => operation.enabled);
+  const hasExistingBuild = agentResult?.build?.success === true;
 
-  function makeTerminalLine(status: TerminalLogLine['status'], text: string): TerminalLogLine {
+  function makeTerminalLine(
+    status: TerminalLogLine['status'],
+    text: string,
+  ): TerminalLogLine {
     return {
       id: `${Date.now()}_${Math.random().toString(16).slice(2)}`,
       status,
       text,
-    }
+    };
   }
 
   const progressMessageMap: Record<string, string> = {
     'Reading markdown design documents': t('generate.progress.readDocs'),
-    'Normalizing application specification': t('generate.progress.normalizeSpec'),
+    'Normalizing application specification': t(
+      'generate.progress.normalizeSpec',
+    ),
     'Planning NestJS bootstrap files': t('generate.progress.planFiles'),
     'Generating NestJS bootstrap files': t('generate.progress.generateFiles'),
     'Writing bootstrap files to workspace': t('generate.progress.writeFiles'),
-    'Installing dependencies and compiling bootstrap app': t('generate.progress.runBuild'),
+    'Installing dependencies and compiling bootstrap app': t(
+      'generate.progress.runBuild',
+    ),
     'Repairing bootstrap build failures': t('generate.progress.repairFiles'),
-    'Planning entity, ORM, and CRUD tasks': t('generate.progress.planBuildTasks'),
+    'Planning entity, ORM, and CRUD tasks': t(
+      'generate.progress.planBuildTasks',
+    ),
     'Selecting next generation task': t('generate.progress.selectNextTask'),
     'Preparing selected task': t('generate.progress.taskPlanner'),
-    'Reading relevant generated code context': t('generate.progress.codeContext'),
-    'Generating task implementation files': t('generate.progress.codeGeneration'),
+    'Reading relevant generated code context': t(
+      'generate.progress.codeContext',
+    ),
+    'Generating task implementation files': t(
+      'generate.progress.codeGeneration',
+    ),
     'Applying generated file changes': t('generate.progress.applyPatch'),
     'Running TypeScript build check': t('generate.progress.syntaxCheck'),
     'Running generated app verification gate': t('generate.progress.e2eCheck'),
     'Recording completed task': t('generate.progress.recordCompleted'),
     'Recording failed task': t('generate.progress.recordFailed'),
     'Running final NestJS app build': t('generate.progress.runFinalBuild'),
-    'Running final HTTP and Swagger smoke check': t('generate.progress.runFinalSmoke'),
-    'Validating final application against the specification skeleton': t('generate.progress.validateFinalContracts'),
+    'Running final HTTP and Swagger smoke check': t(
+      'generate.progress.runFinalSmoke',
+    ),
+    'Validating final application against the specification skeleton': t(
+      'generate.progress.validateFinalContracts',
+    ),
     'Repairing final build failures': t('generate.progress.repairFinalBuild'),
-    'Restoring user-owned files into staging workspace': t('generate.progress.restoreUserFiles'),
-    'Collecting generated artifact summary': t('generate.progress.packageArtifact'),
+    'Restoring user-owned files into staging workspace': t(
+      'generate.progress.restoreUserFiles',
+    ),
+    'Collecting generated artifact summary': t(
+      'generate.progress.packageArtifact',
+    ),
     'Starting NestJS app generation agent': t('generate.startAgent'),
-  }
+  };
 
   function localizeProgress(message: string): string {
-    const exact = progressMessageMap[message]
-    if (exact) return exact
-    const preparingMatch = message.match(/^Preparing (\S+) output directory$/)
+    const exact = progressMessageMap[message];
+    if (exact) return exact;
+    const preparingMatch = message.match(/^Preparing (\S+) output directory$/);
     if (preparingMatch)
       return t('generate.progress.preparingOutput', {
         target: preparingMatch[1],
-      })
-    return message
+      });
+    return message;
   }
 
   function taskProgressLabel(progress: AgentProgressEvent): string | null {
-    const taskKind = typeof progress.detail?.taskKind === 'string' ? progress.detail.taskKind : null
-    if (!taskKind) return null
+    const taskKind =
+      typeof progress.detail?.taskKind === 'string'
+        ? progress.detail.taskKind
+        : null;
+    if (!taskKind) return null;
 
-    const entity = typeof progress.detail?.targetEntity === 'string' ? progress.detail.targetEntity : ''
+    const entity =
+      typeof progress.detail?.targetEntity === 'string'
+        ? progress.detail.targetEntity
+        : '';
     const taskKeyByKind: Record<string, TranslationKey> = {
       'entity-fields': 'generate.task.entityFields',
       'entity-relations': 'generate.task.entityRelations',
@@ -5738,11 +6295,11 @@ function GenerateStep({
       'endpoint-workflow': 'generate.task.endpointWorkflow',
       'business-workflow': 'generate.task.businessWorkflow',
       'final-e2e': 'generate.task.finalE2e',
-    }
-    const taskKey = taskKeyByKind[taskKind]
-    if (!taskKey) return null
+    };
+    const taskKey = taskKeyByKind[taskKind];
+    if (!taskKey) return null;
 
-    const task = t(taskKey, { entity })
+    const task = t(taskKey, { entity });
     const phaseKeyByMessage: Record<string, TranslationKey> = {
       'Preparing selected task': 'generate.task.preparing',
       'Reading relevant generated code context': 'generate.task.context',
@@ -5752,31 +6309,52 @@ function GenerateStep({
       'Running generated app verification gate': 'generate.task.verifying',
       'Recording completed task': 'generate.task.completed',
       'Recording failed task': 'generate.task.failed',
-    }
-    const phaseKey = phaseKeyByMessage[progress.message]
-    return phaseKey ? t(phaseKey, { task }) : null
+    };
+    const phaseKey = phaseKeyByMessage[progress.message];
+    return phaseKey ? t(phaseKey, { task }) : null;
   }
 
   function setProgressLine(progress: AgentProgressEvent) {
     // The build graph emits several internal events for each task. Collapse
     // them into one evolving, task-aware terminal line instead of log spam.
-    if (progress.message === 'Selecting next generation task') return
+    if (progress.message === 'Selecting next generation task') return;
 
-    const taskMessage = taskProgressLabel(progress)
-    const localizedMessage = taskMessage ?? localizeProgress(progress.message)
-    const isTaskInternalStep = Boolean(taskMessage)
+    const taskMessage = taskProgressLabel(progress);
+    const localizedMessage = taskMessage ?? localizeProgress(progress.message);
+    const isTaskInternalStep = Boolean(taskMessage);
     const isTerminalTaskEvent =
-      progress.message === 'Recording completed task' || progress.message === 'Recording failed task'
+      progress.message === 'Recording completed task' ||
+      progress.message === 'Recording failed task';
+    const failureDetails =
+      progress.stage === 'failed' && typeof progress.detail?.error === 'string'
+        ? progress.detail.error
+            .split('\n')
+            .map((line) => line.trim())
+            .filter(Boolean)
+            .slice(0, 8)
+            .map((line) => line.slice(0, 500))
+        : [];
 
     setTerminalLines((currentLines) => {
-      const lastLine = currentLines[currentLines.length - 1]
+      const lastLine = currentLines[currentLines.length - 1];
 
-      if (isTaskInternalStep && progress.stage === 'completed' && !isTerminalTaskEvent) {
-        return currentLines
+      if (
+        isTaskInternalStep &&
+        progress.stage === 'completed' &&
+        !isTerminalTaskEvent
+      ) {
+        return currentLines;
       }
 
-      if (isTaskInternalStep && progress.stage === 'started' && lastLine?.status === 'running') {
-        return [...currentLines.slice(0, -1), { ...lastLine, text: localizedMessage }]
+      if (
+        isTaskInternalStep &&
+        progress.stage === 'started' &&
+        lastLine?.status === 'running'
+      ) {
+        return [
+          ...currentLines.slice(0, -1),
+          { ...lastLine, text: localizedMessage },
+        ];
       }
 
       if (
@@ -5784,7 +6362,7 @@ function GenerateStep({
         lastLine?.status === 'running' &&
         lastLine.text === localizedMessage
       ) {
-        return currentLines
+        return currentLines;
       }
 
       if (
@@ -5792,7 +6370,10 @@ function GenerateStep({
         lastLine?.status === 'running' &&
         lastLine.text === localizedMessage
       ) {
-        return [...currentLines.slice(0, -1), { ...lastLine, status: 'success' }]
+        return [
+          ...currentLines.slice(0, -1),
+          { ...lastLine, status: 'success' },
+        ];
       }
 
       if (
@@ -5800,7 +6381,11 @@ function GenerateStep({
         lastLine?.status === 'running' &&
         lastLine.text === localizedMessage
       ) {
-        return [...currentLines.slice(0, -1), { ...lastLine, status: 'error' }]
+        return [
+          ...currentLines.slice(0, -1),
+          { ...lastLine, status: 'error' },
+          ...failureDetails.map((line) => makeTerminalLine('error', line)),
+        ];
       }
 
       const status =
@@ -5808,15 +6393,19 @@ function GenerateStep({
           ? 'success'
           : progress.stage === 'failed'
             ? 'error'
-            : 'running'
+            : 'running';
 
-      return [...currentLines, makeTerminalLine(status, localizedMessage)]
-    })
+      return [
+        ...currentLines,
+        makeTerminalLine(status, localizedMessage),
+        ...failureDetails.map((line) => makeTerminalLine('error', line)),
+      ];
+    });
   }
 
   async function createWorkspaceSnapshot() {
-    setIsGeneratingWorkspace(true)
-    setGenerateError(null)
+    setIsGeneratingWorkspace(true);
+    setGenerateError(null);
 
     try {
       const response = await authFetch(`${apiBaseUrl}/api/generate/workspace`, {
@@ -5828,40 +6417,48 @@ function GenerateStep({
           relations,
           operations,
         }),
-      })
+      });
 
       if (!response.ok) {
-        throw new Error(t('error.workspaceFailed'))
+        throw new Error(t('error.workspaceFailed'));
       }
 
-      const workspaceData = (await response.json()) as GenerateWorkspace
-      setWorkspace(workspaceData)
-      setAgentResult(null)
-      onWorkspaceChange(workspaceData)
-      onNestJsResultChange(null)
+      const workspaceData = (await response.json()) as GenerateWorkspace;
+      setWorkspace(workspaceData);
+      setAgentResult(null);
+      onWorkspaceChange(workspaceData);
+      onNestJsResultChange(null);
       setTerminalLines([
         makeTerminalLine('success', t('generate.snapshotCreated')),
-        makeTerminalLine('idle', t('generate.targetFolder', { uuid: workspaceData.workspaceId })),
+        makeTerminalLine(
+          'idle',
+          t('generate.targetFolder', { uuid: workspaceData.workspaceId }),
+        ),
         makeTerminalLine(
           'success',
           t('generate.wroteInputs', { files: workspaceData.files.join(', ') }),
         ),
         makeTerminalLine('idle', t('generate.nextNest')),
-      ])
-      onNestJsAppReadyChange(false)
+      ]);
+      onNestJsAppReadyChange(false);
     } catch (error) {
-      setGenerateError(error instanceof Error ? error.message : t('error.unexpectedGenerate'))
-      hasRequestedWorkspace.current = false
+      setGenerateError(
+        error instanceof Error ? error.message : t('error.unexpectedGenerate'),
+      );
+      hasRequestedWorkspace.current = false;
     } finally {
-      setIsGeneratingWorkspace(false)
+      setIsGeneratingWorkspace(false);
     }
   }
 
   async function deleteExistingBuild(workspaceId: string) {
     try {
-      await authFetch(`${apiBaseUrl}/api/generate/workspace/${workspaceId}/nestjs`, {
-        method: 'DELETE',
-      })
+      await authFetch(
+        `${apiBaseUrl}/api/generate/workspace/${workspaceId}/nestjs`,
+        {
+          method: 'DELETE',
+        },
+      );
     } catch {
       // Ignore — build will overwrite
     }
@@ -5869,41 +6466,41 @@ function GenerateStep({
 
   async function runNestJsAgent() {
     if (!workspace) {
-      return
+      return;
     }
 
-    const isRegenerate = hasExistingBuild
+    const isRegenerate = hasExistingBuild;
 
-    setIsRunningAgent(true)
-    setGenerateError(null)
-    setAgentResult(null)
-    onNestJsResultChange(null)
-    onNestJsAppReadyChange(false)
+    setIsRunningAgent(true);
+    setGenerateError(null);
+    setAgentResult(null);
+    onNestJsResultChange(null);
+    onNestJsAppReadyChange(false);
 
     if (isRegenerate) {
-      setTerminalLines([makeTerminalLine('running', t('generate.startAgent'))])
-      await deleteExistingBuild(workspace.workspaceId)
-      await createWorkspaceSnapshot()
+      setTerminalLines([makeTerminalLine('running', t('generate.startAgent'))]);
+      await deleteExistingBuild(workspace.workspaceId);
+      await createWorkspaceSnapshot();
     } else {
       setTerminalLines((currentLines) => [
         ...currentLines.filter((line) => line.status !== 'running'),
         makeTerminalLine('running', t('generate.startAgent')),
-      ])
+      ]);
     }
 
     const source = new EventSource(
       `${apiBaseUrl}/api/generate/workspace/${workspace.workspaceId}/nestjs/events${
         token ? `?token=${encodeURIComponent(token)}` : ''
       }`,
-    )
+    );
 
     source.addEventListener('progress', (event) => {
-      const progress = JSON.parse(event.data) as AgentProgressEvent
-      setProgressLine(progress)
-    })
+      const progress = JSON.parse(event.data) as AgentProgressEvent;
+      setProgressLine(progress);
+    });
 
     source.addEventListener('result', (event) => {
-      const result = JSON.parse(event.data) as NestJsAgentResult
+      const result = JSON.parse(event.data) as NestJsAgentResult;
       const buildSummaryLines = result.build?.errorSummary
         ? result.build.errorSummary
             .split('\n')
@@ -5911,64 +6508,69 @@ function GenerateStep({
             .filter(Boolean)
             .slice(0, 12)
             .map((line) => makeTerminalLine('error', line))
-        : []
-      setAgentResult(result)
-      onNestJsResultChange(result)
-      onNestJsAppReadyChange(result.build?.success === true)
+        : [];
+      setAgentResult(result);
+      onNestJsResultChange(result);
+      onNestJsAppReadyChange(result.build?.success === true);
       setTerminalLines((currentLines) => [
         ...currentLines.filter((line) => line.status !== 'running'),
         makeTerminalLine(
           result.build?.success ? 'success' : 'error',
           t('generate.finalBuild', {
-            status: result.build?.success ? t('generate.passed') : t('generate.failed'),
+            status: result.build?.success
+              ? t('generate.passed')
+              : t('generate.failed'),
           }),
         ),
         ...buildSummaryLines,
-        makeTerminalLine('idle', t('generate.artifactFiles', { count: result.files.length })),
-      ])
-    })
+        makeTerminalLine(
+          'idle',
+          t('generate.artifactFiles', { count: result.files.length }),
+        ),
+      ]);
+    });
 
     source.addEventListener('agent-error', (event) => {
-      const payload = JSON.parse(event.data) as { message?: string }
-      setGenerateError(payload.message ?? t('error.agentUnexpected'))
+      const payload = JSON.parse(event.data) as { message?: string };
+      setGenerateError(payload.message ?? t('error.agentUnexpected'));
       setTerminalLines((currentLines) => [
         ...currentLines.filter((line) => line.status !== 'running'),
         makeTerminalLine('error', payload.message ?? t('error.agentFailed')),
-      ])
-      onNestJsAppReadyChange(false)
-      setIsRunningAgent(false)
-      source.close()
-    })
+      ]);
+      onNestJsAppReadyChange(false);
+      setIsRunningAgent(false);
+      source.close();
+    });
 
     source.addEventListener('done', () => {
       setTerminalLines((currentLines) => [
         ...currentLines.filter((line) => line.status !== 'running'),
         makeTerminalLine('success', t('generate.streamClosed')),
-      ])
-      setIsRunningAgent(false)
-      source.close()
-    })
+      ]);
+      setIsRunningAgent(false);
+      source.close();
+    });
 
     source.onerror = () => {
       if (source.readyState === EventSource.CLOSED) {
-        return
+        return;
       }
-      setGenerateError(t('error.agentStream'))
-      onNestJsAppReadyChange(false)
+      setGenerateError(t('error.agentStream'));
+      onNestJsAppReadyChange(false);
       setTerminalLines((currentLines) => [
         ...currentLines.filter((line) => line.status !== 'running'),
         makeTerminalLine('error', t('error.agentStream')),
-      ])
-      setIsRunningAgent(false)
-      source.close()
-    }
+      ]);
+      setIsRunningAgent(false);
+      source.close();
+    };
   }
 
   useEffect(() => {
     if (initialAgentResult?.build?.success) {
-      onNestJsAppReadyChange(true)
+      onNestJsAppReadyChange(true);
       if (!hasRequestedWorkspace.current) {
-        hasRequestedWorkspace.current = true
+        hasRequestedWorkspace.current = true;
         setTerminalLines([
           makeTerminalLine(
             'success',
@@ -5977,25 +6579,25 @@ function GenerateStep({
             }),
           ),
           makeTerminalLine('idle', t('generate.readyToNext')),
-        ])
+        ]);
       }
-      return
+      return;
     }
 
     if (hasRequestedWorkspace.current) {
-      return
+      return;
     }
 
-    hasRequestedWorkspace.current = true
-    void createWorkspaceSnapshot()
-  })
+    hasRequestedWorkspace.current = true;
+    void createWorkspaceSnapshot();
+  });
 
   useEffect(() => {
     terminalRef.current?.scrollTo({
       top: terminalRef.current.scrollHeight,
       behavior: 'smooth',
-    })
-  }, [terminalLines])
+    });
+  }, [terminalLines]);
 
   const visibleTerminalLines =
     terminalLines.length > 0
@@ -6016,7 +6618,7 @@ function GenerateStep({
             status: 'idle' as const,
             text: t('generate.inputFiles'),
           },
-        ]
+        ];
 
   return (
     <div className="flow-grid">
@@ -6034,7 +6636,9 @@ function GenerateStep({
           <span>{t('generate.workspace')}</span>
           <strong>
             {workspace?.workspaceId ??
-              (isGeneratingWorkspace ? t('generate.creating') : t('generate.notCreated'))}
+              (isGeneratingWorkspace
+                ? t('generate.creating')
+                : t('generate.notCreated'))}
           </strong>
           <span>{t('generate.nestApp')}</span>
           <strong>
@@ -6061,10 +6665,16 @@ function GenerateStep({
             </button>
           </div>
         </div>
-        <div className="terminal-window" ref={terminalRef} role="log" aria-live="polite">
+        <div
+          className="terminal-window"
+          ref={terminalRef}
+          role="log"
+          aria-live="polite"
+        >
           {visibleTerminalLines.map((line, index) => {
             const isLastRunningLine =
-              line.status === 'running' && index === visibleTerminalLines.length - 1
+              line.status === 'running' &&
+              index === visibleTerminalLines.length - 1;
 
             return (
               <div
@@ -6090,15 +6700,17 @@ function GenerateStep({
                 >
                   {line.text}
                 </span>
-                {isLastRunningLine ? <span className="terminal-cursor" /> : null}
+                {isLastRunningLine ? (
+                  <span className="terminal-cursor" />
+                ) : null}
               </div>
-            )
+            );
           })}
         </div>
         {generateError ? <p className="error-text">{generateError}</p> : null}
       </section>
     </div>
-  )
+  );
 }
 
 function TestStep({
@@ -6110,63 +6722,84 @@ function TestStep({
   onTestResultChange,
   workspace,
 }: {
-  draftProject: DraftProject
-  initialTestResult: TestAgentResult | null
-  nestResult: NestJsAgentResult | null
-  token: string | null
-  onTestReadyChange: (isReady: boolean) => void
-  onTestResultChange: (result: TestAgentResult | null) => void
-  workspace: GenerateWorkspace | null
+  draftProject: DraftProject;
+  initialTestResult: TestAgentResult | null;
+  nestResult: NestJsAgentResult | null;
+  token: string | null;
+  onTestReadyChange: (isReady: boolean) => void;
+  onTestResultChange: (result: TestAgentResult | null) => void;
+  workspace: GenerateWorkspace | null;
 }) {
-  const { language, t } = useI18n()
-  const [testResult, setTestResult] = useState<TestAgentResult | null>(initialTestResult)
-  const [isRunningAgent, setIsRunningAgent] = useState(false)
-  const [testError, setTestError] = useState<string | null>(null)
-  const [terminalLines, setTerminalLines] = useState<TerminalLogLine[]>([])
-  const terminalRef = useRef<HTMLDivElement | null>(null)
+  const { language, t } = useI18n();
+  const [testResult, setTestResult] = useState<TestAgentResult | null>(
+    initialTestResult,
+  );
+  const [isRunningAgent, setIsRunningAgent] = useState(false);
+  const [testError, setTestError] = useState<string | null>(null);
+  const [terminalLines, setTerminalLines] = useState<TerminalLogLine[]>([]);
+  const terminalRef = useRef<HTMLDivElement | null>(null);
   const canRunTests = Boolean(
-    nestResult?.build?.success && nestResult.appPath && workspace?.workspacePath,
-  )
-  const coveragePercent = formatCoveragePercent(testResult?.test.coverageSummary)
+    nestResult?.build?.success &&
+    nestResult.appPath &&
+    workspace?.workspacePath,
+  );
+  const coveragePercent = formatCoveragePercent(
+    testResult?.test.coverageSummary,
+  );
 
-  function makeTerminalLine(status: TerminalLogLine['status'], text: string): TerminalLogLine {
+  function makeTerminalLine(
+    status: TerminalLogLine['status'],
+    text: string,
+  ): TerminalLogLine {
     return {
       id: `${Date.now()}_${Math.random().toString(16).slice(2)}`,
       status,
       text,
-    }
+    };
   }
 
   const testProgressMap: Record<string, string> = {
-    'Understanding endpoint/function specifications': t('test.progress.understandSpec'),
+    'Understanding endpoint/function specifications': t(
+      'test.progress.understandSpec',
+    ),
     'Searching generated NestJS codebase': t('test.progress.searchCodebase'),
     'Generating framework test code': t('test.progress.generateTestCode'),
     'Generating Jest test code': t('test.progress.generateTestCode'),
     'Applying generated test files': t('test.progress.applyPatch'),
     'Running test coverage and verification': t('test.progress.runCoverage'),
     'Starting NestJS test agent': t('test.startAgent'),
-  }
+  };
 
   function localizeTestProgress(message: string): string {
-    return testProgressMap[message] ?? message
+    return testProgressMap[message] ?? message;
   }
 
   function setProgressLine(progress: AgentProgressEvent) {
     const progressMessage =
-      typeof progress.messageKey === 'string' ? progress.messageKey : progress.message
+      typeof progress.messageKey === 'string'
+        ? progress.messageKey
+        : progress.message;
     const attempt =
-      typeof progress.detail?.attempt === 'number' ? progress.detail.attempt : 1
+      typeof progress.detail?.attempt === 'number'
+        ? progress.detail.attempt
+        : 1;
     const targetFile =
-      typeof progress.detail?.targetFile === 'string' ? progress.detail.targetFile : ''
+      typeof progress.detail?.targetFile === 'string'
+        ? progress.detail.targetFile
+        : '';
     const targetIndex =
-      typeof progress.detail?.targetIndex === 'number' ? progress.detail.targetIndex : 1
+      typeof progress.detail?.targetIndex === 'number'
+        ? progress.detail.targetIndex
+        : 1;
     const targetTotal =
-      typeof progress.detail?.targetTotal === 'number' ? progress.detail.targetTotal : 1
+      typeof progress.detail?.targetTotal === 'number'
+        ? progress.detail.targetTotal
+        : 1;
     const targetProgressValues = {
       path: targetFile,
       index: targetIndex,
       total: targetTotal,
-    }
+    };
     const localizedMessage =
       progressMessage === 'Generating individual Jest test'
         ? t('test.progress.generateOne', targetProgressValues)
@@ -6174,33 +6807,33 @@ function TestStep({
           ? t('test.progress.applyOne', targetProgressValues)
           : progressMessage === 'Verifying individual Jest test'
             ? t('test.progress.verifyOne', targetProgressValues)
-            : localizeTestProgress(progressMessage)
+            : localizeTestProgress(progressMessage);
     const isTestPhase =
       progressMessage !== 'Starting NestJS test agent' &&
       (Object.prototype.hasOwnProperty.call(testProgressMap, progressMessage) ||
         progressMessage === 'Generating individual Jest test' ||
         progressMessage === 'Applying individual Jest test' ||
-        progressMessage === 'Verifying individual Jest test')
+        progressMessage === 'Verifying individual Jest test');
     const isFinalVerification =
       progressMessage === 'NestJS test verification completed' ||
-      progressMessage === 'NestJS test verification failed'
+      progressMessage === 'NestJS test verification failed';
 
     if (isFinalVerification) {
-      return
+      return;
     }
 
     const baseLineText = isTestPhase
       ? t('test.progress.attempt', { attempt, phase: localizedMessage })
-      : localizedMessage
+      : localizedMessage;
     const elapsedSeconds =
       typeof progress.detail?.elapsedSeconds === 'number'
         ? progress.detail.elapsedSeconds
-        : null
-    const isProgressHeartbeat = progress.detail?.heartbeat === true
+        : null;
+    const isProgressHeartbeat = progress.detail?.heartbeat === true;
     const lineText =
       elapsedSeconds && elapsedSeconds > 0
         ? `${baseLineText} · ${t('test.progress.elapsed', { seconds: elapsedSeconds })}`
-        : baseLineText
+        : baseLineText;
     const failureDetails =
       progress.stage === 'failed' && typeof progress.detail?.error === 'string'
         ? progress.detail.error
@@ -6209,29 +6842,34 @@ function TestStep({
             .filter(Boolean)
             .slice(0, 8)
             .map((line) => line.slice(0, 500))
-        : []
+        : [];
     const generatedTestDetails =
-      progress.stage === 'completed' && Array.isArray(progress.detail?.generatedTests)
+      progress.stage === 'completed' &&
+      Array.isArray(progress.detail?.generatedTests)
         ? progress.detail.generatedTests.flatMap((entry: unknown) => {
-            if (!entry || typeof entry !== 'object' || !('path' in entry)) return []
-            const path = typeof entry.path === 'string' ? entry.path : ''
-            if (!path) return []
+            if (!entry || typeof entry !== 'object' || !('path' in entry))
+              return [];
+            const path = typeof entry.path === 'string' ? entry.path : '';
+            if (!path) return [];
             const cases: string[] =
               'cases' in entry && Array.isArray(entry.cases)
-                ? entry.cases.filter((name: unknown): name is string => typeof name === 'string')
-                : []
+                ? entry.cases.filter(
+                    (name: unknown): name is string => typeof name === 'string',
+                  )
+                : [];
             return [
               t('test.progress.generatedFile', { path }),
               ...cases.map((name) => `  ↳ ${name}`),
-            ]
+            ];
           })
-        : []
+        : [];
     const patchedTestDetails =
-      progress.stage === 'completed' && Array.isArray(progress.detail?.patchedTestFiles)
+      progress.stage === 'completed' &&
+      Array.isArray(progress.detail?.patchedTestFiles)
         ? progress.detail.patchedTestFiles
             .filter((path): path is string => typeof path === 'string')
             .map((path) => t('test.progress.patchedFile', { path }))
-        : []
+        : [];
     const plannedTestDetails =
       progress.stage === 'started' &&
       !isProgressHeartbeat &&
@@ -6239,10 +6877,10 @@ function TestStep({
         ? progress.detail.plannedTestFiles
             .filter((path): path is string => typeof path === 'string')
             .map((path) => t('test.progress.targetFile', { path }))
-        : []
+        : [];
 
     setTerminalLines((currentLines) => {
-      const lastLine = currentLines[currentLines.length - 1]
+      const lastLine = currentLines[currentLines.length - 1];
 
       if (progressMessage === 'Generating individual Jest test details') {
         return [
@@ -6250,61 +6888,77 @@ function TestStep({
           ...[...generatedTestDetails, ...patchedTestDetails].map((line) =>
             makeTerminalLine('idle', line),
           ),
-        ]
+        ];
       }
 
       if (isTestPhase && progress.stage === 'started') {
         if (isProgressHeartbeat && lastLine?.status === 'running') {
-          return [...currentLines.slice(0, -1), { ...lastLine, text: lineText }]
+          return [
+            ...currentLines.slice(0, -1),
+            { ...lastLine, text: lineText },
+          ];
         }
 
         if (lastLine?.status === 'running' && lastLine.text === lineText) {
-          return currentLines
+          return currentLines;
         }
 
         const settledLines =
           lastLine?.status === 'running'
-            ? [...currentLines.slice(0, -1), { ...lastLine, status: 'success' as const }]
-            : currentLines
+            ? [
+                ...currentLines.slice(0, -1),
+                { ...lastLine, status: 'success' as const },
+              ]
+            : currentLines;
         return [
           ...settledLines,
           ...plannedTestDetails.map((line) => makeTerminalLine('idle', line)),
           makeTerminalLine('running', lineText),
-        ]
+        ];
       }
 
       if (isTestPhase && progress.stage === 'completed') {
-        const detailLines = [...generatedTestDetails, ...patchedTestDetails].map((line) =>
-          makeTerminalLine('idle', line),
-        )
+        const detailLines = [
+          ...generatedTestDetails,
+          ...patchedTestDetails,
+        ].map((line) => makeTerminalLine('idle', line));
         if (
           lastLine?.status === 'running' &&
-          (lastLine.text === baseLineText || lastLine.text.startsWith(`${baseLineText} ·`))
+          (lastLine.text === baseLineText ||
+            lastLine.text.startsWith(`${baseLineText} ·`))
         ) {
           return [
             ...currentLines.slice(0, -1),
             { ...lastLine, status: 'success', text: baseLineText },
             ...detailLines,
-          ]
+          ];
         }
 
-        return [...currentLines, makeTerminalLine('success', lineText), ...detailLines]
+        return [
+          ...currentLines,
+          makeTerminalLine('success', lineText),
+          ...detailLines,
+        ];
       }
 
       if (isTestPhase && progress.stage === 'failed') {
         const failedLines =
           lastLine?.status === 'running' &&
-          (lastLine.text === baseLineText || lastLine.text.startsWith(`${baseLineText} ·`))
+          (lastLine.text === baseLineText ||
+            lastLine.text.startsWith(`${baseLineText} ·`))
             ? [
                 ...currentLines.slice(0, -1),
                 { ...lastLine, status: 'error' as const, text: baseLineText },
               ]
-            : [...currentLines, makeTerminalLine('error', baseLineText)]
+            : [...currentLines, makeTerminalLine('error', baseLineText)];
         return [
           ...failedLines,
-          makeTerminalLine('error', t('test.progress.attemptFailed', { attempt })),
+          makeTerminalLine(
+            'error',
+            t('test.progress.attemptFailed', { attempt }),
+          ),
           ...failureDetails.map((line) => makeTerminalLine('error', line)),
-        ]
+        ];
       }
 
       const status =
@@ -6312,47 +6966,49 @@ function TestStep({
           ? 'success'
           : progress.stage === 'failed'
             ? 'error'
-            : 'running'
+            : 'running';
 
       if (lastLine?.status === 'running' && lastLine.text === lineText) {
-        return [...currentLines.slice(0, -1), { ...lastLine, status }]
+        return [...currentLines.slice(0, -1), { ...lastLine, status }];
       }
 
-      return [...currentLines, makeTerminalLine(status, lineText)]
-    })
+      return [...currentLines, makeTerminalLine(status, lineText)];
+    });
   }
 
   function runTestAgent() {
     if (!canRunTests || !nestResult?.appPath || !workspace?.workspacePath) {
-      setTestError(t('test.notReady'))
-      return
+      setTestError(t('test.notReady'));
+      return;
     }
 
-    setIsRunningAgent(true)
-    setTestError(null)
-    setTestResult(null)
-    onTestReadyChange(false)
-    onTestResultChange(null)
-    setTerminalLines([makeTerminalLine('running', t('test.startAgent'))])
+    setIsRunningAgent(true);
+    setTestError(null);
+    setTestResult(null);
+    onTestReadyChange(false);
+    onTestResultChange(null);
+    setTerminalLines([makeTerminalLine('running', t('test.startAgent'))]);
 
     const params = new URLSearchParams({
       appDir: nestResult.appPath,
       projectDir: workspace.workspacePath,
       maxAttempts: '20',
       language,
-    })
+    });
     if (token) {
-      params.set('token', token)
+      params.set('token', token);
     }
-    const source = new EventSource(`${apiBaseUrl}/api/tests/events?${params.toString()}`)
+    const source = new EventSource(
+      `${apiBaseUrl}/api/tests/events?${params.toString()}`,
+    );
 
     source.addEventListener('progress', (event) => {
-      const progress = JSON.parse(event.data) as AgentProgressEvent
-      setProgressLine(progress)
-    })
+      const progress = JSON.parse(event.data) as AgentProgressEvent;
+      setProgressLine(progress);
+    });
 
     source.addEventListener('result', (event) => {
-      const result = JSON.parse(event.data) as TestAgentResult
+      const result = JSON.parse(event.data) as TestAgentResult;
       const failureLines = result.test.errorSummary
         ? result.test.errorSummary
             .split('\n')
@@ -6360,65 +7016,77 @@ function TestStep({
             .filter(Boolean)
             .slice(0, 12)
             .map((line) => makeTerminalLine('error', line))
-        : []
+        : [];
 
-      setTestResult(result)
-      onTestReadyChange(result.verified)
-      onTestResultChange(result)
+      setTestResult(result);
+      onTestReadyChange(result.verified);
+      onTestResultChange(result);
       setTerminalLines((currentLines) => [
         ...currentLines.filter((line) => line.status !== 'running'),
-        makeTerminalLine('success', result.verified ? t('test.verified') : t('test.failed')),
+        makeTerminalLine(
+          'success',
+          result.verified ? t('test.verified') : t('test.failed'),
+        ),
         ...failureLines,
-        makeTerminalLine('idle', `${t('test.changedFiles')}: ${result.changedFiles.length}`),
-        makeTerminalLine('idle', `${t('test.generatedFiles')}: ${result.generatedFiles.length}`),
-      ])
-    })
+        makeTerminalLine(
+          'idle',
+          `${t('test.changedFiles')}: ${result.changedFiles.length}`,
+        ),
+        makeTerminalLine(
+          'idle',
+          `${t('test.generatedFiles')}: ${result.generatedFiles.length}`,
+        ),
+      ]);
+    });
 
     source.addEventListener('agent-error', (event) => {
-      const payload = JSON.parse(event.data) as { message?: string }
-      setTestError(payload.message ?? t('error.testAgentUnexpected'))
+      const payload = JSON.parse(event.data) as { message?: string };
+      setTestError(payload.message ?? t('error.testAgentUnexpected'));
       setTerminalLines((currentLines) => [
         ...currentLines.filter((line) => line.status !== 'running'),
-        makeTerminalLine('error', payload.message ?? t('error.testAgentFailed')),
-      ])
-      onTestReadyChange(false)
-      onTestResultChange(null)
-      setIsRunningAgent(false)
-      source.close()
-    })
+        makeTerminalLine(
+          'error',
+          payload.message ?? t('error.testAgentFailed'),
+        ),
+      ]);
+      onTestReadyChange(false);
+      onTestResultChange(null);
+      setIsRunningAgent(false);
+      source.close();
+    });
 
     source.addEventListener('done', () => {
-      setIsRunningAgent(false)
-      source.close()
-    })
+      setIsRunningAgent(false);
+      source.close();
+    });
 
     source.onerror = () => {
       if (source.readyState === EventSource.CLOSED) {
-        return
+        return;
       }
-      setTestError(t('error.testAgentStream'))
+      setTestError(t('error.testAgentStream'));
       setTerminalLines((currentLines) => [
         ...currentLines.filter((line) => line.status !== 'running'),
         makeTerminalLine('error', t('error.testAgentStream')),
-      ])
-      onTestReadyChange(false)
-      onTestResultChange(null)
-      setIsRunningAgent(false)
-      source.close()
-    }
+      ]);
+      onTestReadyChange(false);
+      onTestResultChange(null);
+      setIsRunningAgent(false);
+      source.close();
+    };
   }
 
   useEffect(() => {
-    onTestReadyChange(testResult?.verified === true)
-    onTestResultChange(testResult)
-  }, [onTestReadyChange, onTestResultChange, testResult])
+    onTestReadyChange(testResult?.verified === true);
+    onTestResultChange(testResult);
+  }, [onTestReadyChange, onTestResultChange, testResult]);
 
   useEffect(() => {
     terminalRef.current?.scrollTo({
       top: terminalRef.current.scrollHeight,
       behavior: 'smooth',
-    })
-  }, [terminalLines])
+    });
+  }, [terminalLines]);
 
   const visibleTerminalLines =
     terminalLines.length > 0
@@ -6428,7 +7096,7 @@ function TestStep({
             canRunTests ? 'idle' : 'error',
             canRunTests ? t('test.runAgent') : t('test.notReady'),
           ),
-        ]
+        ];
 
   return (
     <div className="flow-grid">
@@ -6436,12 +7104,15 @@ function TestStep({
         <h3>{t('test.report')}</h3>
         <div className="metrics">
           <div>
-            <span>{testResult?.test.testsPassed ?? (testResult?.verified ? 1 : 0)}</span>
+            <span>
+              {testResult?.test.testsPassed ?? (testResult?.verified ? 1 : 0)}
+            </span>
             {t('test.passing')}
           </div>
           <div>
             <span>
-              {testResult?.test.testsFailed ?? (testResult && !testResult.verified ? 1 : 0)}
+              {testResult?.test.testsFailed ??
+                (testResult && !testResult.verified ? 1 : 0)}
             </span>
             {t('test.failing')}
           </div>
@@ -6469,10 +7140,16 @@ function TestStep({
             {isRunningAgent ? t('test.runningAgent') : t('test.runAgent')}
           </button>
         </div>
-        <div className="terminal-window" ref={terminalRef} role="log" aria-live="polite">
+        <div
+          className="terminal-window"
+          ref={terminalRef}
+          role="log"
+          aria-live="polite"
+        >
           {visibleTerminalLines.map((line, index) => {
             const isLastRunningLine =
-              line.status === 'running' && index === visibleTerminalLines.length - 1
+              line.status === 'running' &&
+              index === visibleTerminalLines.length - 1;
 
             return (
               <div
@@ -6498,15 +7175,17 @@ function TestStep({
                 >
                   {line.text}
                 </span>
-                {isLastRunningLine ? <span className="terminal-cursor" /> : null}
+                {isLastRunningLine ? (
+                  <span className="terminal-cursor" />
+                ) : null}
               </div>
-            )
+            );
           })}
         </div>
         {testError ? <p className="error-text">{testError}</p> : null}
       </section>
     </div>
-  )
+  );
 }
 
-export default App
+export default App;

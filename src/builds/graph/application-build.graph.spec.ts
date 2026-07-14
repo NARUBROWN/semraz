@@ -51,6 +51,16 @@ describe('ApplicationBuildGraph final-build repair helpers', () => {
       const graph = makeGraph({});
       expect(graph.extractErrorFilePaths('npm ERR! build failed')).toEqual([]);
     });
+
+    it('extracts configuration files from final contract failures', () => {
+      const graph = makeGraph({});
+
+      expect(
+        graph.extractErrorFilePaths(
+          'Final specification contract failed:\nnest-cli.json: Swagger plugin is required',
+        ),
+      ).toContain('nest-cli.json');
+    });
   });
 
   describe('collectFinalRepairFiles', () => {
@@ -91,6 +101,30 @@ describe('ApplicationBuildGraph final-build repair helpers', () => {
         'src/b.ts',
       ]);
     });
+  });
+
+  it('includes nest-cli.json in the final Swagger contract gate', async () => {
+    const graph = makeGraph({
+      'src/main.ts': 'export {};',
+      'package.json': '{}',
+      'nest-cli.json': '{"compilerOptions":{"plugins":["@nestjs/swagger"]}}',
+      '.env.example': 'PORT=3000',
+      'README.md': 'ignored',
+    });
+
+    const files = await graph.readApplicationContractFiles('ROOT');
+
+    expect(files.map((file: { path: string }) => file.path)).toEqual(
+      expect.arrayContaining([
+        'src/main.ts',
+        'package.json',
+        'nest-cli.json',
+        '.env.example',
+      ]),
+    );
+    expect(files.map((file: { path: string }) => file.path)).not.toContain(
+      'README.md',
+    );
   });
 
   describe('nextAfterFinalBuild', () => {

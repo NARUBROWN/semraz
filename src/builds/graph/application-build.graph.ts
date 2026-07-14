@@ -577,7 +577,9 @@ export class ApplicationBuildGraph {
     };
   }
 
-  private progressTaskDetail(state: BuildStateType): Record<string, unknown> | undefined {
+  private progressTaskDetail(
+    state: BuildStateType,
+  ): Record<string, unknown> | undefined {
     if (!state.currentTask) {
       return undefined;
     }
@@ -725,7 +727,9 @@ export class ApplicationBuildGraph {
     return { spec: this.parseMarkdownSpec(state) };
   }
 
-  private async normalizeDocsMapReduce(state: BuildStateType): Promise<AppSpec> {
+  private async normalizeDocsMapReduce(
+    state: BuildStateType,
+  ): Promise<AppSpec> {
     const shards = this.markdownShards(state.docs, 24_000);
     const partials = await this.mapWithConcurrency(shards, 3, (docs, index) =>
       this.llm.generateJson<AppSpec>({
@@ -782,34 +786,66 @@ export class ApplicationBuildGraph {
     return shards.length > 0 ? shards : [[]];
   }
 
-  private reducePartialSpecs(partials: AppSpec[], fallbackName: string): AppSpec {
+  private reducePartialSpecs(
+    partials: AppSpec[],
+    fallbackName: string,
+  ): AppSpec {
     const entities = new Map<string, EntitySpec>();
-    const mergeRecords = (left: Array<Record<string, unknown>>, right: Array<Record<string, unknown>>) =>
-      Array.from(new Map([...left, ...right].map((item) => [JSON.stringify(item), item])).values());
+    const mergeRecords = (
+      left: Array<Record<string, unknown>>,
+      right: Array<Record<string, unknown>>,
+    ) =>
+      Array.from(
+        new Map(
+          [...left, ...right].map((item) => [JSON.stringify(item), item]),
+        ).values(),
+      );
     for (const partial of partials) {
       for (const entity of this.cleanEntities(partial.entities ?? [])) {
         const key = this.normalizeName(entity.name);
         const existing = entities.get(key);
-        entities.set(key, existing ? {
-          ...existing,
-          description: existing.description ?? entity.description,
-          fields: mergeRecords(existing.fields, entity.fields),
-          relations: mergeRecords(existing.relations, entity.relations),
-          endpoints: mergeRecords(existing.endpoints, entity.endpoints),
-          businessRules: [...new Set([...existing.businessRules, ...entity.businessRules])],
-        } : entity);
+        entities.set(
+          key,
+          existing
+            ? {
+                ...existing,
+                description: existing.description ?? entity.description,
+                fields: mergeRecords(existing.fields, entity.fields),
+                relations: mergeRecords(existing.relations, entity.relations),
+                endpoints: mergeRecords(existing.endpoints, entity.endpoints),
+                businessRules: [
+                  ...new Set([
+                    ...existing.businessRules,
+                    ...entity.businessRules,
+                  ]),
+                ],
+              }
+            : entity,
+        );
       }
     }
-    const endpoints = mergeRecords([], partials.flatMap((partial) => partial.endpoints ?? []));
+    const endpoints = mergeRecords(
+      [],
+      partials.flatMap((partial) => partial.endpoints ?? []),
+    );
     return {
-      projectName: partials.find((partial) => partial.projectName)?.projectName ?? fallbackName,
+      projectName:
+        partials.find((partial) => partial.projectName)?.projectName ??
+        fallbackName,
       summary: partials.find((partial) => partial.summary)?.summary ?? '',
       entities: [...entities.values()],
       endpoints,
       auth: Object.assign({}, ...partials.map((partial) => partial.auth ?? {})),
-      database: Object.assign({}, ...partials.map((partial) => partial.database ?? {})),
-      businessRules: [...new Set(partials.flatMap((partial) => partial.businessRules ?? []))],
-      assumptions: [...new Set(partials.flatMap((partial) => partial.assumptions ?? []))],
+      database: Object.assign(
+        {},
+        ...partials.map((partial) => partial.database ?? {}),
+      ),
+      businessRules: [
+        ...new Set(partials.flatMap((partial) => partial.businessRules ?? [])),
+      ],
+      assumptions: [
+        ...new Set(partials.flatMap((partial) => partial.assumptions ?? [])),
+      ],
     };
   }
 
@@ -820,12 +856,15 @@ export class ApplicationBuildGraph {
   ): Promise<R[]> {
     const results = new Array<R>(items.length);
     let next = 0;
-    const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-      while (next < items.length) {
-        const index = next++;
-        results[index] = await mapper(items[index], index);
-      }
-    });
+    const workers = Array.from(
+      { length: Math.min(concurrency, items.length) },
+      async () => {
+        while (next < items.length) {
+          const index = next++;
+          results[index] = await mapper(items[index], index);
+        }
+      },
+    );
     await Promise.all(workers);
     return results;
   }
@@ -1662,10 +1701,11 @@ export class ApplicationBuildGraph {
     }
     const adapter = this.targetAdapters.get(state.request.target);
     const files = await this.readApplicationContractFiles(state.outputDir);
-    const problems = adapter.validateApplicationFiles?.({
-      spec: state.spec,
-      files,
-    }) ?? [];
+    const problems =
+      adapter.validateApplicationFiles?.({
+        spec: state.spec,
+        files,
+      }) ?? [];
     return {
       buildResult: {
         success: problems.length === 0,
@@ -1715,16 +1755,20 @@ export class ApplicationBuildGraph {
 
     const adapter = this.targetAdapters.get(state.request.target);
     const plannedPaths = new Set(state.plan.files.map((file) => file.path));
-    const files = adapter.normalizeGeneratedFiles(
-      this.cleanGeneratedFiles(repaired.files ?? []).filter((file) =>
-        plannedPaths.has(file.path),
-      ),
-    ).filter((file) => {
-      const existing = currentFiles.find(
-        (candidate) => candidate.path === file.path,
-      )?.content;
-      return !existing || this.preservesUserCodeBlocks(existing, file.content);
-    });
+    const files = adapter
+      .normalizeGeneratedFiles(
+        this.cleanGeneratedFiles(repaired.files ?? []).filter((file) =>
+          plannedPaths.has(file.path),
+        ),
+      )
+      .filter((file) => {
+        const existing = currentFiles.find(
+          (candidate) => candidate.path === file.path,
+        )?.content;
+        return (
+          !existing || this.preservesUserCodeBlocks(existing, file.content)
+        );
+      });
     await this.workspace.writeFiles(state.outputDir, files);
 
     return {
@@ -1757,7 +1801,7 @@ export class ApplicationBuildGraph {
       user: [
         `Target framework: ${state.request.target}`,
         `Final-build repair attempt: ${attempt}`,
-        'The generated app failed to compile. Diagnose the errors below and return the FULL final content of every file you change.',
+        'The generated app failed a build, runtime verification, or specification-contract check. Diagnose the errors below and return the FULL final content of every file you change.',
         'Return ONLY files that must change; never restate an unchanged file.',
         'A frequent cause is a relation whose inverse side is missing: `@ManyToOne(() => Other, (o) => o.things)` requires `things: Thing[]` with `@OneToMany(() => Thing, (t) => t.other)` on the Other entity. Add the missing inverse property (with decorator + import) to the target entity — do NOT delete the relation.',
         'Never remove entities, fields, endpoints, or features from the spec to make the build pass.',
@@ -1785,16 +1829,20 @@ export class ApplicationBuildGraph {
     });
 
     const allowedPaths = new Set(focusFiles.map((file) => file.path));
-    const files = adapter.normalizeGeneratedFiles(
-      this.cleanGeneratedFiles(repaired.files ?? []).filter((file) =>
-        allowedPaths.has(file.path),
-      ),
-    ).filter((file) => {
-      const existing = focusFiles.find(
-        (candidate) => candidate.path === file.path,
-      )?.content;
-      return !existing || this.preservesUserCodeBlocks(existing, file.content);
-    });
+    const files = adapter
+      .normalizeGeneratedFiles(
+        this.cleanGeneratedFiles(repaired.files ?? []).filter((file) =>
+          allowedPaths.has(file.path),
+        ),
+      )
+      .filter((file) => {
+        const existing = focusFiles.find(
+          (candidate) => candidate.path === file.path,
+        )?.content;
+        return (
+          !existing || this.preservesUserCodeBlocks(existing, file.content)
+        );
+      });
     await this.workspace.writeFiles(state.outputDir, files);
 
     // The fix is now on disk; runFinalBuild re-reads from disk, so only the
@@ -1859,9 +1907,7 @@ export class ApplicationBuildGraph {
           doneCriteria: [],
         },
         adapter,
-        previousFailures: [
-          { success: false, commands: [], errorSummary },
-        ],
+        previousFailures: [{ success: false, commands: [], errorSummary }],
         workspaceId,
       });
       if (context.fileContents.length > 0) return context.fileContents;
@@ -1877,6 +1923,11 @@ export class ApplicationBuildGraph {
     let match: RegExpExecArray | null;
     while ((match = regex.exec(clean)) !== null) {
       paths.add(match[1]);
+    }
+    const configRegex =
+      /(^|[\s(])(nest-cli\.json|package\.json|tsconfig(?:\.build)?\.json|\.env\.example)(?=[:\s)]|$)/gm;
+    while ((match = configRegex.exec(clean)) !== null) {
+      paths.add(match[2]);
     }
     return Array.from(paths);
   }
@@ -1949,17 +2000,15 @@ export class ApplicationBuildGraph {
     );
     return state.spec.entities.map((entity) => {
       const entityPath = `src/${this.toKebabCase(entity.name)}/${this.toKebabCase(entity.name)}.entity.ts`;
-      const results = state.completedTasks.filter(
-        (result) => {
-          const task = taskById.get(result.taskId);
-          return (
-            task?.targetEntity === entity.name ||
-            (task?.kind === 'entity-relations' &&
-              task.allowedFiles.includes(entityPath)) ||
-            task?.kind === 'orm-registration'
-          );
-        },
-      );
+      const results = state.completedTasks.filter((result) => {
+        const task = taskById.get(result.taskId);
+        return (
+          task?.targetEntity === entity.name ||
+          (task?.kind === 'entity-relations' &&
+            task.allowedFiles.includes(entityPath)) ||
+          task?.kind === 'orm-registration'
+        );
+      });
       const last = results.at(-1);
       return {
         entityName: entity.name,
@@ -2241,7 +2290,10 @@ export class ApplicationBuildGraph {
       const absolutePath = this.workspace.resolveInside(outputDir, file);
       result.push({
         path: file,
-        content: (await this.workspace.readTextFile(absolutePath)).slice(0, maxChars),
+        content: (await this.workspace.readTextFile(absolutePath)).slice(
+          0,
+          maxChars,
+        ),
       });
     }
     return result;
@@ -2254,6 +2306,7 @@ export class ApplicationBuildGraph {
       (file) =>
         (file.startsWith('src/') && file.endsWith('.ts')) ||
         file === 'package.json' ||
+        file === 'nest-cli.json' ||
         file === '.env.example',
     );
     const files: GeneratedFile[] = [];
@@ -2268,7 +2321,9 @@ export class ApplicationBuildGraph {
     return files;
   }
 
-  private async readPreservableFiles(outputDir: string): Promise<GeneratedFile[]> {
+  private async readPreservableFiles(
+    outputDir: string,
+  ): Promise<GeneratedFile[]> {
     try {
       const paths = (await this.workspace.listFiles(outputDir)).filter(
         (file) =>
@@ -2345,7 +2400,10 @@ export class ApplicationBuildGraph {
         }
       }
       const firstClass = result.search(/export\s+class\s+\w+/);
-      if (oldIndex < previous.search(/export\s+class\s+\w+/) && firstClass >= 0) {
+      if (
+        oldIndex < previous.search(/export\s+class\s+\w+/) &&
+        firstClass >= 0
+      ) {
         result = `${result.slice(0, firstClass)}${block}\n\n${result.slice(firstClass)}`;
       } else {
         result = `${result.trimEnd()}\n\n${block}\n`;

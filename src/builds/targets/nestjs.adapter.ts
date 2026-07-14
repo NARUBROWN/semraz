@@ -829,12 +829,20 @@ export class NestJsTargetAdapter implements TargetAdapter {
       id: 'orm-registration',
       kind: 'orm-registration',
       title: 'Register TypeORM infrastructure',
-      description: `Reduce all relation map outputs, configure ${productionDatabase} through DATABASE_URL with a SQL.js local smoke fallback, and register all generated entities.`,
+      description: `Reduce all relation map outputs, configure ${productionDatabase} through DATABASE_URL with a SQL.js local smoke fallback, and register all generated entities. Preserve existing entity definitions unless a reported ORM metadata error requires a portable column or relation correction.`,
       // Relation map tasks depend only on the entity files touched by that
       // shard. ORM registration, however, registers the whole application and
       // must wait for every scalar entity task as well as every relation map.
       dependsOn: [...entityFieldTaskIds, ...relationTaskIds],
-      allowedFiles: ['src/app.module.ts', 'package.json', 'tsconfig.json'],
+      allowedFiles: [
+        'src/app.module.ts',
+        'package.json',
+        'tsconfig.json',
+        ...entities.map((entity) => {
+          const slug = this.toKebabCase(entity.name);
+          return `src/${slug}/${slug}.entity.ts`;
+        }),
+      ],
       doneCriteria: [
         `${productionDatabase} DATABASE_URL is the production database and SQL.js is the local smoke fallback`,
         'All generated entity classes are registered',
@@ -1029,6 +1037,7 @@ export class NestJsTargetAdapter implements TargetAdapter {
   private normalizePortableColumnTypes(content: string) {
     return content
       .replace(/\btype:\s*['"](?:timestamp|datetime)['"]\s*,?\s*/g, '')
+      .replace(/\btype:\s*['"]enum['"]/g, "type: 'simple-enum'")
       .replace(/,\s*}/g, ' }')
       .replace(/@Column\(\{\s*}\)/g, '@Column()');
   }

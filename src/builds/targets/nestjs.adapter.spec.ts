@@ -287,6 +287,34 @@ describe('NestJsTargetAdapter', () => {
     expect(file.content).not.toContain("type: 'timestamp'");
   });
 
+  it('normalizes enum columns for SQL.js verification and the production driver', () => {
+    const [file] = adapter.normalizeGeneratedFiles([
+      {
+        path: 'src/field/field.entity.ts',
+        content:
+          "@Column({ type: 'enum', enum: ['ACTIVE', 'INACTIVE'] })\nstatus!: string;",
+      },
+    ]);
+
+    expect(file.content).toContain("type: 'simple-enum'");
+    expect(file.content).not.toContain("type: 'enum'");
+  });
+
+  it('lets ORM registration repair entity metadata without requiring entity rewrites', () => {
+    const task = adapter
+      .planBuildTasks(spec)
+      .tasks.find((candidate) => candidate.kind === 'orm-registration')!;
+
+    expect(task.allowedFiles).toEqual(
+      expect.arrayContaining([
+        'src/app.module.ts',
+        'src/user/user.entity.ts',
+        'src/profile/profile.entity.ts',
+      ]),
+    );
+    expect(adapter.requiredTaskFiles(task)).toEqual(['src/app.module.ts']);
+  });
+
   it('rejects nullable ERD-required fields and missing endpoint routes', () => {
     const entityTask = adapter
       .planBuildTasks(spec)
