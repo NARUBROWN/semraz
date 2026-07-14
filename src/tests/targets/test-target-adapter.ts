@@ -47,6 +47,8 @@ export interface TestTargetAdapter {
     coverageGaps: CoverageGap[];
     /** Patches from the prior attempt that failed to apply, to resend. */
     patchFailures?: FilePatchFailure[];
+    /** When present, generate or repair only this one spec file. */
+    targetFile?: string;
   }): string;
 
   /** Commands run once before the first test execution, such as dependency setup. */
@@ -54,6 +56,9 @@ export interface TestTargetAdapter {
 
   /** Commands that run the full test + coverage suite without repeating setup. */
   executionCommands(): CommandSpec[];
+
+  /** Run one spec in isolation immediately after it is generated. */
+  targetExecutionCommands(testFile: string): CommandSpec[];
 
   /** Human-readable coverage table extracted from the runner output. */
   extractCoverageSummary(output: string): string | undefined;

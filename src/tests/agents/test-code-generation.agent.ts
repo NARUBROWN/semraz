@@ -26,6 +26,7 @@ export class TestCodeGenerationAgent {
     adapter: TestTargetAdapter;
     workspaceId?: string;
     patchFailures?: FilePatchFailure[];
+    targetFile?: string;
   }): Promise<TestGenerationOutput> {
     const harnessFiles = await params.adapter.harnessFiles(params.appDir);
 
@@ -34,7 +35,16 @@ export class TestCodeGenerationAgent {
       patches?: FilePatch[];
     }>({
       system: params.adapter.testGenerationSystemPrompt(),
-      user: params.adapter.testGenerationPrompt(params),
+      user: [
+        params.adapter.testGenerationPrompt(params),
+        ...(params.targetFile
+          ? [
+              '',
+              `Current spec target: ${params.targetFile}`,
+              'Generate or patch ONLY this exact test file. Do not return any other spec file.',
+            ]
+          : []),
+      ].join('\n'),
       temperature: params.attempt > 1 ? 0.12 : 0.05,
       context: {
         workspaceId: params.workspaceId,
@@ -50,6 +60,7 @@ export class TestCodeGenerationAgent {
         .filter(
           (file) =>
             params.adapter.isTestFile(file.path) &&
+            (!params.targetFile || file.path === params.targetFile) &&
             (!params.context.relevantFiles.some(
               (existing) => existing.path === file.path,
             ) ||
@@ -66,6 +77,7 @@ export class TestCodeGenerationAgent {
         patch &&
         typeof patch.path === 'string' &&
         params.adapter.isPatchablePath(patch.path) &&
+        (!params.targetFile || patch.path === params.targetFile) &&
         Array.isArray(patch.edits),
     );
 

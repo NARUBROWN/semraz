@@ -983,6 +983,21 @@ export class NestJsTestAdapter implements TestTargetAdapter {
     ];
   }
 
+  targetExecutionCommands(testFile: string): CommandSpec[] {
+    return [
+      {
+        command: 'npm',
+        args: ['run', 'test', '--', '--runTestsByPath', testFile],
+        description: `Run generated Jest spec ${testFile}`,
+        env: {
+          DATABASE_URL: null,
+          NODE_ENV: 'test',
+          PORT: null,
+        },
+      },
+    ];
+  }
+
   extractTestCounts(
     output: string,
   ): { passed: number; failed: number; total: number } | undefined {

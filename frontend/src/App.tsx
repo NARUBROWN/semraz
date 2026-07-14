@@ -425,6 +425,11 @@ Generate a reliable backend from a reviewed Semraz spec.
     'test.progress.attemptFailed': 'Test attempt {attempt} needs fixes',
     'test.progress.generatedFile': 'Generated test: {path}',
     'test.progress.patchedFile': 'Updated test: {path}',
+    'test.progress.elapsed': '{seconds}s elapsed',
+    'test.progress.targetFile': 'Test generation target: {path}',
+    'test.progress.generateOne': 'Generate Jest spec {index}/{total}: {path}',
+    'test.progress.applyOne': 'Apply Jest spec {index}/{total}: {path}',
+    'test.progress.verifyOne': 'Verify Jest spec {index}/{total}: {path}',
     'common.backHome': '← Back to home',
     'footer.tagline': 'From idea to a tested backend, in one guided flow.',
     'footer.colProduct': 'Product',
@@ -758,6 +763,11 @@ Generate a reliable backend from a reviewed Semraz spec.
     'test.progress.attemptFailed': '{attempt}차 테스트 수정 필요',
     'test.progress.generatedFile': '생성한 테스트: {path}',
     'test.progress.patchedFile': '수정한 테스트: {path}',
+    'test.progress.elapsed': '{seconds}초 경과',
+    'test.progress.targetFile': '테스트 생성 대상: {path}',
+    'test.progress.generateOne': '{index}/{total} Jest 스펙 생성: {path}',
+    'test.progress.applyOne': '{index}/{total} Jest 스펙 적용: {path}',
+    'test.progress.verifyOne': '{index}/{total} Jest 스펙 검증: {path}',
     'common.backHome': '← 홈으로 돌아가기',
     'footer.tagline': '아이디어부터 테스트된 백엔드까지, 하나의 흐름으로.',
     'footer.colProduct': '제품',
@@ -6141,12 +6151,33 @@ function TestStep({
   }
 
   function setProgressLine(progress: AgentProgressEvent) {
-    const localizedMessage = localizeTestProgress(progress.message)
     const attempt =
       typeof progress.detail?.attempt === 'number' ? progress.detail.attempt : 1
+    const targetFile =
+      typeof progress.detail?.targetFile === 'string' ? progress.detail.targetFile : ''
+    const targetIndex =
+      typeof progress.detail?.targetIndex === 'number' ? progress.detail.targetIndex : 1
+    const targetTotal =
+      typeof progress.detail?.targetTotal === 'number' ? progress.detail.targetTotal : 1
+    const targetProgressValues = {
+      path: targetFile,
+      index: targetIndex,
+      total: targetTotal,
+    }
+    const localizedMessage =
+      progress.message === 'Generating individual Jest test'
+        ? t('test.progress.generateOne', targetProgressValues)
+        : progress.message === 'Applying individual Jest test'
+          ? t('test.progress.applyOne', targetProgressValues)
+          : progress.message === 'Verifying individual Jest test'
+            ? t('test.progress.verifyOne', targetProgressValues)
+            : localizeTestProgress(progress.message)
     const isTestPhase =
       progress.message !== 'Starting NestJS test agent' &&
-      Object.prototype.hasOwnProperty.call(testProgressMap, progress.message)
+      (Object.prototype.hasOwnProperty.call(testProgressMap, progress.message) ||
+        progress.message === 'Generating individual Jest test' ||
+        progress.message === 'Applying individual Jest test' ||
+        progress.message === 'Verifying individual Jest test')
     const isFinalVerification =
       progress.message === 'NestJS test verification completed' ||
       progress.message === 'NestJS test verification failed'
@@ -6155,9 +6186,18 @@ function TestStep({
       return
     }
 
-    const lineText = isTestPhase
+    const baseLineText = isTestPhase
       ? t('test.progress.attempt', { attempt, phase: localizedMessage })
       : localizedMessage
+    const elapsedSeconds =
+      typeof progress.detail?.elapsedSeconds === 'number'
+        ? progress.detail.elapsedSeconds
+        : null
+    const isProgressHeartbeat = progress.detail?.heartbeat === true
+    const lineText =
+      elapsedSeconds && elapsedSeconds > 0
+        ? `${baseLineText} · ${t('test.progress.elapsed', { seconds: elapsedSeconds })}`
+        : baseLineText
     const failureDetails =
       progress.stage === 'failed' && typeof progress.detail?.error === 'string'
         ? progress.detail.error
@@ -6189,11 +6229,32 @@ function TestStep({
             .filter((path): path is string => typeof path === 'string')
             .map((path) => t('test.progress.patchedFile', { path }))
         : []
+    const plannedTestDetails =
+      progress.stage === 'started' &&
+      !isProgressHeartbeat &&
+      Array.isArray(progress.detail?.plannedTestFiles)
+        ? progress.detail.plannedTestFiles
+            .filter((path): path is string => typeof path === 'string')
+            .map((path) => t('test.progress.targetFile', { path }))
+        : []
 
     setTerminalLines((currentLines) => {
       const lastLine = currentLines[currentLines.length - 1]
 
+      if (progress.message === 'Generating individual Jest test details') {
+        return [
+          ...currentLines,
+          ...[...generatedTestDetails, ...patchedTestDetails].map((line) =>
+            makeTerminalLine('idle', line),
+          ),
+        ]
+      }
+
       if (isTestPhase && progress.stage === 'started') {
+        if (isProgressHeartbeat && lastLine?.status === 'running') {
+          return [...currentLines.slice(0, -1), { ...lastLine, text: lineText }]
+        }
+
         if (lastLine?.status === 'running' && lastLine.text === lineText) {
           return currentLines
         }
@@ -6202,17 +6263,24 @@ function TestStep({
           lastLine?.status === 'running'
             ? [...currentLines.slice(0, -1), { ...lastLine, status: 'success' as const }]
             : currentLines
-        return [...settledLines, makeTerminalLine('running', lineText)]
+        return [
+          ...settledLines,
+          ...plannedTestDetails.map((line) => makeTerminalLine('idle', line)),
+          makeTerminalLine('running', lineText),
+        ]
       }
 
       if (isTestPhase && progress.stage === 'completed') {
         const detailLines = [...generatedTestDetails, ...patchedTestDetails].map((line) =>
           makeTerminalLine('idle', line),
         )
-        if (lastLine?.status === 'running' && lastLine.text === lineText) {
+        if (
+          lastLine?.status === 'running' &&
+          (lastLine.text === baseLineText || lastLine.text.startsWith(`${baseLineText} ·`))
+        ) {
           return [
             ...currentLines.slice(0, -1),
-            { ...lastLine, status: 'success' },
+            { ...lastLine, status: 'success', text: baseLineText },
             ...detailLines,
           ]
         }
@@ -6222,9 +6290,13 @@ function TestStep({
 
       if (isTestPhase && progress.stage === 'failed') {
         const failedLines =
-          lastLine?.status === 'running' && lastLine.text === lineText
-            ? [...currentLines.slice(0, -1), { ...lastLine, status: 'error' as const }]
-            : [...currentLines, makeTerminalLine('error', lineText)]
+          lastLine?.status === 'running' &&
+          (lastLine.text === baseLineText || lastLine.text.startsWith(`${baseLineText} ·`))
+            ? [
+                ...currentLines.slice(0, -1),
+                { ...lastLine, status: 'error' as const, text: baseLineText },
+              ]
+            : [...currentLines, makeTerminalLine('error', baseLineText)]
         return [
           ...failedLines,
           makeTerminalLine('error', t('test.progress.attemptFailed', { attempt })),
@@ -6263,7 +6335,7 @@ function TestStep({
     const params = new URLSearchParams({
       appDir: nestResult.appPath,
       projectDir: workspace.workspacePath,
-      maxAttempts: '3',
+      maxAttempts: '20',
     })
     if (token) {
       params.set('token', token)

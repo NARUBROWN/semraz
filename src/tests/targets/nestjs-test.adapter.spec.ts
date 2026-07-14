@@ -31,6 +31,23 @@ describe('NestJsTestAdapter', () => {
     ]);
   });
 
+  it('builds a Jest command that verifies only one selected spec', () => {
+    expect(
+      adapter.targetExecutionCommands('src/vehicle/vehicle.service.spec.ts'),
+    ).toEqual([
+      expect.objectContaining({
+        command: 'npm',
+        args: [
+          'run',
+          'test',
+          '--',
+          '--runTestsByPath',
+          'src/vehicle/vehicle.service.spec.ts',
+        ],
+      }),
+    ]);
+  });
+
   it('injects a missing @nestjs/common exception import into a spec', () => {
     // Reproduces "ReferenceError: NotFoundException is not defined": the spec
     // uses the exception but never imports it.

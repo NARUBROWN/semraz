@@ -10,11 +10,14 @@ export class TestExecutionAgent {
   async run(
     appDir: string,
     adapter: TestTargetAdapter,
-    options: { includeSetup?: boolean } = {},
+    options: { includeSetup?: boolean; targetFile?: string } = {},
   ): Promise<TestRunResult> {
+    const executionCommands = options.targetFile
+      ? adapter.targetExecutionCommands(options.targetFile)
+      : adapter.executionCommands();
     const commands = [
       ...(options.includeSetup ? adapter.setupCommands() : []),
-      ...adapter.executionCommands(),
+      ...executionCommands,
     ];
     const results = await this.terminal.run(appDir, commands);
     const success = results.every((result) => result.success);
@@ -31,8 +34,12 @@ export class TestExecutionAgent {
       errorSummary: success
         ? undefined
         : this.summarize(results, adapter, output),
-      coverageSummary: adapter.extractCoverageSummary(output),
-      coverageGaps: await adapter.readCoverageGaps(appDir),
+      coverageSummary: options.targetFile
+        ? undefined
+        : adapter.extractCoverageSummary(output),
+      coverageGaps: options.targetFile
+        ? []
+        : await adapter.readCoverageGaps(appDir),
       testsPassed: counts?.passed,
       testsFailed: counts?.failed,
       testsTotal: counts?.total,

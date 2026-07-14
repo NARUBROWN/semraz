@@ -93,14 +93,19 @@ const TestState = Annotation.Root({
     reducer: (_current, update) => update,
     default: () => [],
   }),
+  targetValidationFailed: Annotation<boolean>({
+    reducer: (_current, update) => update,
+    default: () => false,
+  }),
 });
 
 type TestStateType = typeof TestState.State;
 
-const TEST_GRAPH_RECURSION_LIMIT = 80;
+const TEST_GRAPH_RECURSION_LIMIT = 120;
 // The model converges incrementally (each retry fixes a subset of failures), so
 // a slightly higher default than 3 meaningfully raises the fully-green rate.
-const DEFAULT_TEST_ATTEMPTS = 4;
+const DEFAULT_TEST_ATTEMPTS = 20;
+const MAX_TEST_ATTEMPTS = 20;
 
 @Injectable()
 export class ApplicationTestGraph {
@@ -138,19 +143,7 @@ export class ApplicationTestGraph {
       )
       .addNode(
         'generateTestCode',
-        this.withProgress(
-          'Generating framework test code',
-          this.generateTestCode.bind(this),
-          onProgress,
-        ),
-      )
-      .addNode(
-        'applyPatch',
-        this.withProgress(
-          'Applying generated test files',
-          this.applyPatch.bind(this),
-          onProgress,
-        ),
+        (state) => this.generateTestsSequentially(state, onProgress),
       )
       .addNode(
         'runCoverageAndTests',
@@ -163,8 +156,15 @@ export class ApplicationTestGraph {
       .addEdge(START, 'understandEndpointSpec')
       .addEdge('understandEndpointSpec', 'searchCodebase')
       .addEdge('searchCodebase', 'generateTestCode')
-      .addEdge('generateTestCode', 'applyPatch')
-      .addEdge('applyPatch', 'runCoverageAndTests')
+      .addConditionalEdges(
+        'generateTestCode',
+        (state) => this.nextAfterTargetTests(state),
+        {
+          searchCodebase: 'searchCodebase',
+          runCoverageAndTests: 'runCoverageAndTests',
+          done: END,
+        },
+      )
       .addConditionalEdges(
         'runCoverageAndTests',
         (state) => this.nextAfterTests(state),
@@ -219,10 +219,32 @@ export class ApplicationTestGraph {
     onProgress?: (event: TestProgressEvent) => void,
   ) {
     return async (state: TestStateType) => {
-      const detail = { attempt: this.progressAttempt(state, message) };
+      const detail = {
+        attempt: this.progressAttempt(state, message),
+        ...this.testGenerationTargetProgress(message, state),
+      };
       onProgress?.({ stage: 'started', message, detail });
+      const startedAt = Date.now();
+      const progressHeartbeat = onProgress
+        ? setInterval(() => {
+            onProgress({
+              stage: 'started',
+              message,
+              detail: {
+                ...detail,
+                heartbeat: true,
+                elapsedSeconds: Math.max(
+                  1,
+                  Math.round((Date.now() - startedAt) / 1000),
+                ),
+              },
+            });
+          }, 15_000)
+        : undefined;
+      progressHeartbeat?.unref();
       try {
         const result = await node(state);
+        if (progressHeartbeat) clearInterval(progressHeartbeat);
         const failed = result.testResult?.success === false;
         onProgress?.({
           stage: failed ? 'failed' : 'completed',
@@ -233,6 +255,7 @@ export class ApplicationTestGraph {
         });
         return result;
       } catch (error) {
+        if (progressHeartbeat) clearInterval(progressHeartbeat);
         onProgress?.({
           stage: 'failed',
           message,
@@ -280,6 +303,38 @@ export class ApplicationTestGraph {
     };
   }
 
+  private testGenerationTargetProgress(
+    message: string,
+    state: TestStateType,
+  ): Record<string, unknown> {
+    if (message !== 'Generating framework test code' || !state.context) {
+      return {};
+    }
+
+    return {
+      plannedTestFiles: this.testGenerationTargets(state),
+    };
+  }
+
+  private testGenerationTargets(state: TestStateType): string[] {
+    if (!state.context) return [];
+    const failedSpecs = state.context.failedSpecPaths.filter((filePath) =>
+      filePath.endsWith('.spec.ts'),
+    );
+    const plannedTestFiles =
+      failedSpecs.length > 0
+        ? failedSpecs
+        : state.context.relevantFiles
+            .map((file) => file.path)
+            .filter(
+              (filePath) =>
+                !filePath.endsWith('.spec.ts') &&
+                /\.(?:controller|service)\.ts$/.test(filePath),
+            )
+            .map((filePath) => filePath.replace(/\.ts$/, '.spec.ts'));
+    return Array.from(new Set(plannedTestFiles)).sort().slice(0, 40);
+  }
+
   private normalizeRequest(dto: TestRequestDto): NormalizedTestRequest {
     if (!dto.appDir) {
       throw new BadRequestException('appDir is required');
@@ -298,7 +353,7 @@ export class ApplicationTestGraph {
       projectDir,
       maxAttempts: Math.min(
         Math.max(dto.maxAttempts ?? DEFAULT_TEST_ATTEMPTS, 1),
-        5,
+        MAX_TEST_ATTEMPTS,
       ),
       workspaceId,
     };
@@ -333,6 +388,225 @@ export class ApplicationTestGraph {
         previousFailures: state.failures,
       }),
     };
+  }
+
+  private async generateTestsSequentially(
+    state: TestStateType,
+    onProgress?: (event: TestProgressEvent) => void,
+  ): Promise<Partial<TestStateType>> {
+    if (!state.spec || !state.context) {
+      throw new BadRequestException(
+        'Cannot generate tests without specification and code context',
+      );
+    }
+
+    const adapter = this.testAdapters.get(state.request.target);
+    const targets = this.testGenerationTargets(state);
+    const round = state.attempts + 1;
+    let dependenciesReady = state.dependenciesReady;
+    let testRuns = state.testRuns;
+    const generatedFiles: GeneratedFile[] = [];
+    const changedFiles: string[] = [];
+    const patchFailures: FilePatchFailure[] = [];
+    const failedResults: Array<{ target: string; result: TestRunResult }> = [];
+    const commands: TestRunResult['commands'] = [];
+
+    for (const [index, targetFile] of targets.entries()) {
+      const detail = {
+        attempt: round,
+        targetFile,
+        targetIndex: index + 1,
+        targetTotal: targets.length,
+      };
+
+      let output: Awaited<ReturnType<TestCodeGenerationAgent['generate']>>;
+      try {
+        output = await this.runProgressPhase(
+          'Generating individual Jest test',
+          detail,
+          () =>
+            this.testGenerationAgent.generate({
+              appDir: state.request.appDir,
+              spec: state.spec!,
+              context: state.context!,
+              attempt: round,
+              coverageGaps: state.coverageGaps,
+              adapter,
+              workspaceId: state.request.workspaceId,
+              patchFailures: state.patchFailures,
+              targetFile,
+            }),
+          onProgress,
+        );
+      } catch (error) {
+        failedResults.push({
+          target: targetFile,
+          result: {
+            success: false,
+            commands: [],
+            errorSummary: `${targetFile}: ${error instanceof Error ? error.message : 'Test generation failed'}`,
+          },
+        });
+        continue;
+      }
+
+      const targetSpecs = output.files.filter(
+        (file) => adapter.isTestFile(file.path) && file.path === targetFile,
+      );
+      const targetPatches = output.patches.filter(
+        (patch) => patch.path === targetFile,
+      );
+      if (targetSpecs.length === 0 && targetPatches.length === 0) {
+        const errorSummary = `${targetFile}: the test generator returned no file or patch for the selected target`;
+        onProgress?.({
+          stage: 'failed',
+          message: 'Generating individual Jest test',
+          detail: { ...detail, error: errorSummary },
+        });
+        failedResults.push({
+          target: targetFile,
+          result: { success: false, commands: [], errorSummary },
+        });
+        continue;
+      }
+
+      onProgress?.({
+        stage: 'completed',
+        message: 'Generating individual Jest test details',
+        detail: {
+          ...detail,
+          ...this.generatedTestProgress('Generating framework test code', {
+            generatedFiles: targetSpecs,
+            currentPatches: targetPatches,
+          }),
+        },
+      });
+
+      await this.runProgressPhase(
+        'Applying individual Jest test',
+        detail,
+        async () => {
+          const replaced = await this.codePatchTool.applyPlainFileReplacements(
+            state.request.appDir,
+            output.files,
+          );
+          const patched = await this.codePatchTool.applyEditPatches(
+            state.request.appDir,
+            targetPatches,
+            adapter.validatePatchedSyntax?.bind(adapter),
+          );
+          changedFiles.push(...replaced, ...patched.applied);
+          patchFailures.push(...patched.failures);
+          return {};
+        },
+        onProgress,
+      );
+      generatedFiles.push(...targetSpecs);
+
+      onProgress?.({
+        stage: 'started',
+        message: 'Verifying individual Jest test',
+        detail,
+      });
+      const includeSetup = !dependenciesReady;
+      const result = await this.testExecutionAgent.run(
+        state.request.appDir,
+        adapter,
+        { includeSetup, targetFile },
+      );
+      commands.push(...result.commands);
+      const setupCommandCount = includeSetup ? adapter.setupCommands().length : 0;
+      dependenciesReady =
+        dependenciesReady ||
+        (includeSetup &&
+          (setupCommandCount === 0 ||
+            result.commands
+              .slice(0, setupCommandCount)
+              .every((command) => command.success)));
+      if (result.commands.length > setupCommandCount) testRuns += 1;
+
+      onProgress?.({
+        stage: result.success ? 'completed' : 'failed',
+        message: 'Verifying individual Jest test',
+        detail: result.success
+          ? detail
+          : { ...detail, error: result.errorSummary },
+      });
+      if (!result.success) failedResults.push({ target: targetFile, result });
+    }
+
+    const success = failedResults.length === 0;
+    const testResult: TestRunResult = {
+      success,
+      commands,
+      errorSummary: success
+        ? undefined
+        : failedResults
+            .map(
+              ({ target, result }) =>
+                `FAIL ${target}\n${result.errorSummary ?? 'Unknown targeted test failure'}`,
+            )
+            .join('\n\n'),
+      testsPassed: success ? targets.length : targets.length - failedResults.length,
+      testsFailed: failedResults.length,
+      testsTotal: targets.length,
+    };
+
+    return {
+      generatedFiles,
+      changedFiles,
+      patchFailures,
+      attempts: round,
+      testRuns,
+      dependenciesReady,
+      testResult,
+      failures: success ? [] : [testResult],
+      targetValidationFailed: !success,
+    };
+  }
+
+  private async runProgressPhase<T>(
+    message: string,
+    detail: Record<string, unknown>,
+    task: () => Promise<T>,
+    onProgress?: (event: TestProgressEvent) => void,
+  ): Promise<T> {
+    onProgress?.({ stage: 'started', message, detail });
+    const startedAt = Date.now();
+    const heartbeat = onProgress
+      ? setInterval(() => {
+          onProgress({
+            stage: 'started',
+            message,
+            detail: {
+              ...detail,
+              heartbeat: true,
+              elapsedSeconds: Math.max(
+                1,
+                Math.round((Date.now() - startedAt) / 1000),
+              ),
+            },
+          });
+        }, 15_000)
+      : undefined;
+    heartbeat?.unref();
+    try {
+      const result = await task();
+      if (heartbeat) clearInterval(heartbeat);
+      onProgress?.({ stage: 'completed', message, detail });
+      return result;
+    } catch (error) {
+      if (heartbeat) clearInterval(heartbeat);
+      onProgress?.({
+        stage: 'failed',
+        message,
+        detail: {
+          ...detail,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        },
+      });
+      throw error;
+    }
   }
 
   private async generateTestCode(
@@ -445,6 +719,17 @@ export class ApplicationTestGraph {
       return 'done';
     }
 
+    return state.attempts < state.request.maxAttempts
+      ? 'searchCodebase'
+      : 'done';
+  }
+
+  private nextAfterTargetTests(
+    state: TestStateType,
+  ): 'searchCodebase' | 'runCoverageAndTests' | 'done' {
+    if (!state.targetValidationFailed) {
+      return 'runCoverageAndTests';
+    }
     return state.attempts < state.request.maxAttempts
       ? 'searchCodebase'
       : 'done';
