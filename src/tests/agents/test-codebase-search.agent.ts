@@ -99,8 +99,9 @@ export class TestCodebaseSearchAgent {
       failedSpecPaths,
       instructions: [
         'Generate tests against the existing generated NestJS codebase.',
-        'Prefer isolated controller/service tests when full app bootstrap would require external services.',
-        'Use supertest only when the app module can compile in-memory.',
+        'Use isolated controller/service tests for branch detail and the managed Supertest E2E suite for real module, pipe, route, database, and OpenAPI integration.',
+        'Treat an app that cannot compile in-memory with DATABASE_URL removed as a product defect, not a reason to skip E2E coverage.',
+        'Validate DTO constraints, relation failures, and documented uniqueness/range rules with realistic inputs.',
         'Never modify application source while generating tests. Report product-code defects through failing tests instead.',
       ],
     };

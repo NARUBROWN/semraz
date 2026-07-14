@@ -18,7 +18,10 @@ export class NestJsTestAdapter implements TestTargetAdapter {
 
   constructor(private readonly workspace: WorkspaceWriter) {}
 
-  async harnessFiles(appDir: string): Promise<GeneratedFile[]> {
+  async harnessFiles(
+    appDir: string,
+    spec?: TestSpec,
+  ): Promise<GeneratedFile[]> {
     const packagePath = this.workspace.resolveInside(appDir, 'package.json');
     const packageJson = JSON.parse(
       await this.workspace.readTextFile(packagePath),
@@ -34,6 +37,8 @@ export class NestJsTestAdapter implements TestTargetAdapter {
               ...this.asRecord(packageJson.scripts),
               test: 'jest --runInBand',
               'test:cov': 'jest --coverage --runInBand',
+              'test:e2e':
+                'jest --runInBand --runTestsByPath test/app.e2e-spec.ts',
             },
             devDependencies: {
               ...this.asRecord(packageJson.devDependencies),
@@ -90,7 +95,91 @@ export class NestJsTestAdapter implements TestTargetAdapter {
           2,
         )}\n`,
       },
+      {
+        path: 'test/app.e2e-spec.ts',
+        content: this.e2eSpecContent(spec),
+      },
     ];
+  }
+
+  private e2eSpecContent(spec?: TestSpec): string {
+    const endpoints = (spec?.endpoints ?? []).map((endpoint) => ({
+      operationName: endpoint.operationName,
+      method: endpoint.method.toLowerCase(),
+      path: endpoint.path.replace(/:([A-Za-z0-9_]+)/g, '{$1}'),
+      requestFields: endpoint.requestFields
+        .map((field) => field.name)
+        .filter(
+          (name): name is string =>
+            typeof name === 'string' &&
+            !endpoint.path.includes(`:${name}`) &&
+            !endpoint.path.includes(`{${name}}`),
+        ),
+    }));
+
+    return [
+      "import { INestApplication, ValidationPipe } from '@nestjs/common';",
+      "import { Test } from '@nestjs/testing';",
+      "import { DocumentBuilder, OpenAPIObject, SwaggerModule } from '@nestjs/swagger';",
+      "import request from 'supertest';",
+      "import { AppModule } from '../src/app.module';",
+      '',
+      `const expectedEndpoints = ${JSON.stringify(endpoints, null, 2)} as const;`,
+      '',
+      "describe('Generated application contract (e2e)', () => {",
+      '  let app: INestApplication;',
+      '  let document: OpenAPIObject;',
+      '',
+      '  beforeAll(async () => {',
+      '    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();',
+      '    app = moduleRef.createNestApplication();',
+      '    app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));',
+      "    const config = new DocumentBuilder().setTitle('e2e').setVersion('1').build();",
+      '    document = SwaggerModule.createDocument(app, config);',
+      '    await app.init();',
+      '  });',
+      '',
+      '  afterAll(async () => {',
+      '    await app.close();',
+      '  });',
+      '',
+      "  it('boots the real application and serves health', async () => {",
+      "    await request(app.getHttpServer()).get('/health').expect(200).expect({ status: 'ok' });",
+      '  });',
+      '',
+      "  it('publishes every specified endpoint with a non-empty contract', () => {",
+      '    const propertiesOf = (schema: any): Record<string, unknown> => {',
+      '      if (!schema) return {};',
+      "      if (schema.$ref) return propertiesOf(document.components?.schemas?.[schema.$ref.split('/').pop()!]);",
+      '      return {',
+      '        ...(schema.properties ?? {}),',
+      '        ...Object.assign({}, ...(schema.allOf ?? []).map(propertiesOf)),',
+      '      };',
+      '    };',
+      '',
+      '    for (const endpoint of expectedEndpoints) {',
+      '      const operation = (document.paths[endpoint.path] as any)?.[endpoint.method];',
+      '      expect(operation).toBeDefined();',
+      '      expect(Object.keys(operation.responses ?? {}).some((status) => /^2\\d\\d$/.test(status))).toBe(true);',
+      '      if (endpoint.requestFields.length > 0) {',
+      "        const schema = operation.requestBody?.content?.['application/json']?.schema;",
+      '        const properties = propertiesOf(schema);',
+      '        expect(Object.keys(properties).length).toBeGreaterThan(0);',
+      '        for (const field of endpoint.requestFields) expect(properties).toHaveProperty(field);',
+      '      }',
+      '    }',
+      '  });',
+      '',
+      "  it('executes parameterless GET endpoints without server errors', async () => {",
+      '    for (const endpoint of expectedEndpoints) {',
+      "      if (endpoint.method !== 'get' || endpoint.path.includes('{')) continue;",
+      '      const response = await request(app.getHttpServer()).get(endpoint.path);',
+      '      expect(response.status).toBeLessThan(500);',
+      '    }',
+      '  });',
+      '});',
+      '',
+    ].join('\n');
   }
 
   isTestFile(path: string): boolean {
@@ -99,7 +188,9 @@ export class NestJsTestAdapter implements TestTargetAdapter {
 
   isPatchablePath(path: string): boolean {
     const normalized = path.replace(/\\/g, '/');
-    return normalized.endsWith('.spec.ts');
+    return (
+      normalized.endsWith('.spec.ts') && normalized !== 'test/app.e2e-spec.ts'
+    );
   }
 
   normalizeTestFiles(
@@ -256,7 +347,8 @@ export class NestJsTestAdapter implements TestTargetAdapter {
     if (!context) return content;
     const available = new Set(context.relevantFiles.map((file) => file.path));
     const removed = new Set<string>();
-    const importPattern = /^import\s+\{([^}]+)\}\s+from\s+['"](\.[^'"]+)['"];?\s*$/gm;
+    const importPattern =
+      /^import\s+\{([^}]+)\}\s+from\s+['"](\.[^'"]+)['"];?\s*$/gm;
     let result = content.replace(
       importPattern,
       (statement, names: string, importPath: string) => {
@@ -286,7 +378,10 @@ export class NestJsTestAdapter implements TestTargetAdapter {
     if (!range) return content;
     const body = content.slice(range.start + 1, range.end);
     const next = body
-      .replace(new RegExp(`(^|,)\\s*${this.escapeRegExp(identifier)}\\s*(?=,|$)`, 'g'), '$1')
+      .replace(
+        new RegExp(`(^|,)\\s*${this.escapeRegExp(identifier)}\\s*(?=,|$)`, 'g'),
+        '$1',
+      )
       .replace(/,\s*,/g, ',')
       .replace(/^\s*,|,\s*$/g, '');
     return `${content.slice(0, range.start + 1)}${next}${content.slice(range.end)}`;
@@ -306,13 +401,17 @@ export class NestJsTestAdapter implements TestTargetAdapter {
     }
     const serviceClass = serviceImport[1];
     const serviceVariable =
-      content.match(new RegExp(`\\blet\\s+(\\w+)\\s*:\\s*${serviceClass}\\b`))?.[1] ??
-      'service';
+      content.match(
+        new RegExp(`\\blet\\s+(\\w+)\\s*:\\s*${serviceClass}\\b`),
+      )?.[1] ?? 'service';
     const methods = Array.from(
       new Set(
         Array.from(
           content.matchAll(
-            new RegExp(`jest\\.spyOn\\(\\s*${serviceVariable}\\s*,\\s*['"](\\w+)['"]\\s*\\)`, 'g'),
+            new RegExp(
+              `jest\\.spyOn\\(\\s*${serviceVariable}\\s*,\\s*['"](\\w+)['"]\\s*\\)`,
+              'g',
+            ),
           ),
           (match) => match[1],
         ),
@@ -344,11 +443,15 @@ export class NestJsTestAdapter implements TestTargetAdapter {
     }
     const entityNames = Array.from(
       new Set(
-        Array.from(result.matchAll(/getRepositoryToken\(\s*(\w+)\s*\)/g), (match) => match[1]),
+        Array.from(
+          result.matchAll(/getRepositoryToken\(\s*(\w+)\s*\)/g),
+          (match) => match[1],
+        ),
       ),
     );
     for (const entityName of entityNames) {
-      if (new RegExp(`import\\s+\\{[^}]*\\b${entityName}\\b`).test(result)) continue;
+      if (new RegExp(`import\\s+\\{[^}]*\\b${entityName}\\b`).test(result))
+        continue;
       const entityFile = context?.relevantFiles.find(
         (file) =>
           file.path.endsWith('.entity.ts') &&
@@ -881,6 +984,7 @@ export class NestJsTestAdapter implements TestTargetAdapter {
       'Prefer targeted "patches" to existing spec files. A complete "files" replacement is allowed ONLY for a spec that failed in the immediately preceding run, when removing or restructuring invalid tests is safer than a patch.',
       `Coverage target: at least ${this.coverageTarget}% statements, branches, functions, and lines globally. Prioritize specification behavior over synthetic coverage-only assertions.`,
       'Write a *.spec.ts file next to every controller, service, and any other source file with executable logic — including the root src/app.controller.ts.',
+      'A managed test/app.e2e-spec.ts boots AppModule with SQL.js, verifies health, every specified OpenAPI operation and request schema, and parameterless GET routes. Do not replace or patch that managed file.',
       ...(mandatoryNewSpecs.length > 0
         ? [
             'MANDATORY NEW SPEC FILES: the following source files have no corresponding test. Return each path as a complete entry in "files" during this attempt:',
@@ -893,6 +997,8 @@ export class NestJsTestAdapter implements TestTargetAdapter {
       'Test every public method of every controller and service, including error branches (NotFoundException, BadRequestException, null checks). Controller tests may call ONLY methods listed in controllerContracts. A service method does not imply a controller method with the same name.',
       'Every NestJS HTTP exception you reference (NotFoundException, BadRequestException, ...) MUST be imported from @nestjs/common in that spec file.',
       'The tests must validate the endpoint/function specifications from the Semraz Operations step.',
+      'Add meaningful DTO validation cases for required fields, formats, enum/range/length constraints, and forbidden client ownership of server-managed fields.',
+      'For services that write relation foreign keys or unique values, test the controlled NotFoundException/ConflictException path instead of accepting raw database errors.',
       'Use @nestjs/testing Test.createTestingModule with mocked repositories (getRepositoryToken) so no real database is needed.',
       'Import ONLY files that exist in the codebase context; never invent an import like ./app.service unless that file is shown. A controller with no constructor dependencies is tested with controllers: [TheController] and no providers.',
       'Cover both success and failure paths of each branch; if a service method throws when an entity is missing, assert that it throws.',

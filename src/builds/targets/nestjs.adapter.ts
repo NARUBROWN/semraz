@@ -46,7 +46,8 @@ export class NestJsTargetAdapter implements TargetAdapter {
     'Use "nest build" for the build script, not plain "tsc".',
     'Do not implement business entities yet unless required for the app to compile.',
     'Set up validation pipe and a simple health endpoint or root endpoint.',
-    'Include scripts for build and start.',
+    'Set up a complete OpenAPI contract and reject unknown request properties.',
+    'Include scripts for build, start, and E2E verification.',
   ].join('\n');
 
   bootstrapFiles(spec: AppSpec): GeneratedFile[] {
@@ -140,6 +141,15 @@ export class NestJsTargetAdapter implements TargetAdapter {
             sourceRoot: 'src',
             compilerOptions: {
               deleteOutDir: true,
+              plugins: [
+                {
+                  name: '@nestjs/swagger',
+                  options: {
+                    classValidatorShim: true,
+                    dtoFileNameSuffix: ['.dto.ts'],
+                  },
+                },
+              ],
             },
           },
           null,
@@ -156,7 +166,7 @@ export class NestJsTargetAdapter implements TargetAdapter {
           '',
           'async function bootstrap() {',
           '  const app = await NestFactory.create(AppModule);',
-          '  app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));',
+          '  app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));',
           '',
           '  const config = new DocumentBuilder()',
           `    .setTitle('${this.escapeSingleQuote(spec.projectName || 'Generated Backend')}')`,
@@ -268,9 +278,14 @@ export class NestJsTargetAdapter implements TargetAdapter {
       (entity) => `entity-${this.toKebabCase(entity.name)}-fields`,
     );
     const relationSkeleton = this.relationSkeleton(spec.entities);
-    const relationBatches = this.chunk(relationSkeleton, RELATION_MAP_BATCH_SIZE);
+    const relationBatches = this.chunk(
+      relationSkeleton,
+      RELATION_MAP_BATCH_SIZE,
+    );
     const relationTaskIds = relationBatches.map((_batch, index) =>
-      relationBatches.length === 1 ? 'entity-relations' : `entity-relations-map-${index + 1}`,
+      relationBatches.length === 1
+        ? 'entity-relations'
+        : `entity-relations-map-${index + 1}`,
     );
     relationBatches.forEach((batch, index) => {
       tasks.push(
@@ -387,6 +402,21 @@ export class NestJsTargetAdapter implements TargetAdapter {
           problems.push(`${entity.name}.${name} cannot be nullable`);
         }
       }
+      for (const [fieldName, decorator] of [
+        ['createdAt', 'CreateDateColumn'],
+        ['updatedAt', 'UpdateDateColumn'],
+      ] as const) {
+        if (
+          entity.fields.some((field) => field.name === fieldName) &&
+          !new RegExp(`@${decorator}\\([^)]*\\)\\s*${fieldName}[!]?:`).test(
+            content,
+          )
+        ) {
+          problems.push(
+            `${entity.name}.${fieldName} must use @${decorator} so it is server-managed`,
+          );
+        }
+      }
     }
 
     if (
@@ -422,10 +452,72 @@ export class NestJsTargetAdapter implements TargetAdapter {
       }
       for (const route of routes) {
         if (!expectedRoutes.has(route)) {
-          problems.push(`controller exposes API not present in the endpoint skeleton: ${route}`);
+          problems.push(
+            `controller exposes API not present in the endpoint skeleton: ${route}`,
+          );
         }
       }
+      if (expected.length > 0 && !/@ApiTags\s*\(/.test(controller)) {
+        problems.push(`${entity.name} controller must declare @ApiTags`);
+      }
+      const operationCount = (controller.match(/@ApiOperation\s*\(/g) ?? [])
+        .length;
+      if (operationCount < expected.length) {
+        problems.push(
+          `${entity.name} controller must document every route with @ApiOperation`,
+        );
+      }
+      const responseCount = (
+        controller.match(
+          /@Api(?:Response|OkResponse|CreatedResponse|NoContentResponse)\s*\(/g,
+        ) ?? []
+      ).length;
+      if (responseCount < expected.length) {
+        problems.push(
+          `${entity.name} controller must document a success response for every route`,
+        );
+      }
+      const expectsUuidParam = expected.some((endpoint) => {
+        const pathParams = Array.from(
+          endpoint.path.matchAll(/:([A-Za-z0-9_]+)/g),
+          (match) => match[1],
+        );
+        return pathParams.some((param) => {
+          const field = endpoint.requestFields?.find(
+            (candidate) => candidate.name === param,
+          );
+          return (
+            String(field?.type ?? '')
+              .toLowerCase()
+              .includes('uuid') ||
+            param === 'id' ||
+            param.endsWith('Id')
+          );
+        });
+      });
+      if (expectsUuidParam && !/ParseUUIDPipe/.test(controller)) {
+        problems.push(
+          `${entity.name} controller must validate UUID route parameters with ParseUUIDPipe`,
+        );
+      }
       problems.push(...this.validateDtoSkeleton(entity, params.files));
+    }
+
+    if (params.task.kind === 'entity-relations') {
+      for (const file of params.files.filter((candidate) =>
+        candidate.path.endsWith('.entity.ts'),
+      )) {
+        const owningRelations = (
+          file.content.match(/@(ManyToOne|OneToOne)\s*\(/g) ?? []
+        ).length;
+        const deletePolicies = (file.content.match(/\bonDelete\s*:/g) ?? [])
+          .length;
+        if (deletePolicies < owningRelations) {
+          problems.push(
+            `${file.path} must declare an explicit onDelete policy for every owning relation`,
+          );
+        }
+      }
     }
 
     for (const file of params.files) {
@@ -459,7 +551,9 @@ export class NestJsTargetAdapter implements TargetAdapter {
 
       if (entity.endpoints.length > 0) {
         const controllerPath = `src/${slug}/${slug}.controller.ts`;
-        const controller = params.files.find((file) => file.path === controllerPath);
+        const controller = params.files.find(
+          (file) => file.path === controllerPath,
+        );
         if (!controller) {
           problems.push(`${controllerPath}: endpoint controller is missing`);
         } else {
@@ -472,14 +566,42 @@ export class NestJsTargetAdapter implements TargetAdapter {
         problems.push(...this.validateDtoSkeleton(entity, params.files));
       }
     }
-    const appModule = params.files.find((file) => file.path === 'src/app.module.ts')?.content ?? '';
+    const appModule =
+      params.files.find((file) => file.path === 'src/app.module.ts')?.content ??
+      '';
+    const main =
+      params.files.find((file) => file.path === 'src/main.ts')?.content ?? '';
+    const nestCli =
+      params.files.find((file) => file.path === 'nest-cli.json')?.content ?? '';
     const productionDatabase = this.productionDatabaseType(params.spec);
-    if (!appModule.includes('DATABASE_URL') || !appModule.includes(`type: '${productionDatabase}'`) || !appModule.includes("type: 'sqljs'")) {
-      problems.push(`src/app.module.ts: must provide ${productionDatabase} DATABASE_URL config with SQL.js smoke fallback`);
+    if (
+      !appModule.includes('DATABASE_URL') ||
+      !appModule.includes(`type: '${productionDatabase}'`) ||
+      !appModule.includes("type: 'sqljs'")
+    ) {
+      problems.push(
+        `src/app.module.ts: must provide ${productionDatabase} DATABASE_URL config with SQL.js smoke fallback`,
+      );
+    }
+    if (!main.includes('forbidNonWhitelisted: true')) {
+      problems.push(
+        'src/main.ts: ValidationPipe must reject unknown request properties',
+      );
+    }
+    if (
+      !nestCli.includes('@nestjs/swagger') ||
+      !nestCli.includes('classValidatorShim')
+    ) {
+      problems.push(
+        'nest-cli.json: Nest Swagger plugin with classValidatorShim is required',
+      );
     }
     const expectedGlobalRoutes = new Set([
       'GET /health',
-      ...[...params.spec.endpoints, ...params.spec.entities.flatMap((entity) => entity.endpoints)]
+      ...[
+        ...params.spec.endpoints,
+        ...params.spec.entities.flatMap((entity) => entity.endpoints),
+      ]
         .filter(
           (endpoint): endpoint is EndpointSpec =>
             typeof endpoint.method === 'string' &&
@@ -508,7 +630,9 @@ export class NestJsTargetAdapter implements TargetAdapter {
     );
     for (const route of expectedGlobalRoutes) {
       if (!actualGlobalRoutes.has(route)) {
-        problems.push(`global endpoint skeleton is missing from generated controllers: ${route}`);
+        problems.push(
+          `global endpoint skeleton is missing from generated controllers: ${route}`,
+        );
       }
     }
     for (const file of params.files) {
@@ -540,6 +664,14 @@ export class NestJsTargetAdapter implements TargetAdapter {
       'Service methods that look up a single entity by id (findOne, update, remove) must throw NotFoundException from @nestjs/common when the entity does not exist — never return null to the controller.',
       'Use definite assignment assertions for entity and DTO properties where needed, for example "id!: string".',
       'Preserve ERD nullability exactly: fields marked required/NN must use non-optional properties and must never emit nullable: true; create DTOs must validate those fields as required.',
+      'Use @CreateDateColumn for createdAt and @UpdateDateColumn for updatedAt so timestamps are server-managed. Do not accept primary keys, createdAt, or updatedAt in create/update DTOs unless the endpoint specification explicitly requires client ownership.',
+      'Use @nestjs/swagger PartialType for update DTOs and add @ApiProperty/@ApiPropertyOptional where needed so every request and response field appears in OpenAPI.',
+      'Every controller must declare @ApiTags and every route must declare @ApiOperation plus explicit success and relevant 400/404/409 response decorators.',
+      'Validate UUID route parameters with ParseUUIDPipe. Use class-validator constraints that match the field type and documented business rules, including non-empty, enum, numeric range, and length constraints when specified.',
+      'Enforce invariants twice when appropriate: class-validator for request feedback and TypeORM unique/check/foreign-key constraints for persisted integrity.',
+      'Before saving a relation foreign key, query the related repository and throw NotFoundException when it does not exist; never expose a raw foreign-key violation as HTTP 500.',
+      'Convert expected uniqueness or relation conflicts into ConflictException or BadRequestException with a stable message instead of returning a generic 500.',
+      'Declare an explicit onDelete policy for every TypeORM relation, choosing RESTRICT by default unless the specification explicitly requires CASCADE or SET NULL.',
       'Keep code buildable with npm run build.',
       'Never import a type, enum, or class from another generated file unless the code context explicitly shows that file exports it.',
       'When a DTO needs an enum-like field whose enum lives in an entity file you cannot verify, declare the property as string (optionally a local string union) instead of importing from the entity.',
@@ -639,6 +771,8 @@ export class NestJsTargetAdapter implements TargetAdapter {
       doneCriteria: [
         `${entity.name} entity class exists`,
         'Scalar fields from the spec are represented as TypeORM columns',
+        'Primary keys and createdAt/updatedAt fields are server-managed',
+        'Database constraints preserve documented uniqueness, ranges, and nullability',
         'No imports from not-yet-created related entity files are required',
         'Configured build command passes',
       ],
@@ -652,7 +786,9 @@ export class NestJsTargetAdapter implements TargetAdapter {
     batchNumber: number,
     batchCount: number,
   ): BuildTask {
-    const entityNames = new Set(relations.flatMap((relation) => [relation.source, relation.target]));
+    const entityNames = new Set(
+      relations.flatMap((relation) => [relation.source, relation.target]),
+    );
     return {
       id,
       kind: 'entity-relations',
@@ -663,7 +799,9 @@ export class NestJsTargetAdapter implements TargetAdapter {
         JSON.stringify(relations, null, 2),
       ].join('\n'),
       dependsOn: entityFieldTaskIds.filter((taskId) =>
-        [...entityNames].some((name) => taskId === `entity-${this.toKebabCase(name)}-fields`),
+        [...entityNames].some(
+          (name) => taskId === `entity-${this.toKebabCase(name)}-fields`,
+        ),
       ),
       allowedFiles: [...entityNames].map((name) => {
         const slug = this.toKebabCase(name);
@@ -671,6 +809,7 @@ export class NestJsTargetAdapter implements TargetAdapter {
       }),
       doneCriteria: [
         'Relation decorators match the normalized spec',
+        'Every relation declares an explicit onDelete policy',
         'Related entity imports point to existing generated entity files',
         'Configured build command passes',
       ],
@@ -690,8 +829,7 @@ export class NestJsTargetAdapter implements TargetAdapter {
       id: 'orm-registration',
       kind: 'orm-registration',
       title: 'Register TypeORM infrastructure',
-      description:
-        `Reduce all relation map outputs, configure ${productionDatabase} through DATABASE_URL with a SQL.js local smoke fallback, and register all generated entities.`,
+      description: `Reduce all relation map outputs, configure ${productionDatabase} through DATABASE_URL with a SQL.js local smoke fallback, and register all generated entities.`,
       // Relation map tasks depend only on the entity files touched by that
       // shard. ORM registration, however, registers the whole application and
       // must wait for every scalar entity task as well as every relation map.
@@ -721,9 +859,7 @@ export class NestJsTargetAdapter implements TargetAdapter {
         JSON.stringify(this.conventionalEndpointSkeleton(entity), null, 2),
       ].join('\n'),
       targetEntity: entity.name,
-      dependsOn: [
-        'orm-registration',
-      ],
+      dependsOn: ['orm-registration'],
       allowedFiles: [
         `src/${slug}/${slug}.module.ts`,
         `src/${slug}/${slug}.controller.ts`,
@@ -737,6 +873,8 @@ export class NestJsTargetAdapter implements TargetAdapter {
         'Controller exposes endpoints from the spec',
         'Service uses TypeORM repository for persistence',
         'DTOs use class-validator decorators',
+        'Swagger documents request fields, response models, operations, and error statuses',
+        'Route UUIDs, relation existence, and documented invariants return controlled 4xx errors',
         'Configured build command passes',
       ],
     };
@@ -805,11 +943,7 @@ export class NestJsTargetAdapter implements TargetAdapter {
       title: 'Implement cross-entity transactional business workflows',
       description:
         'Implement business endpoints that update multiple entities atomically, especially stock reservation, stock deduction, stock movement audit rows, invoice creation, and payment-to-invoice consistency.',
-      dependsOn: [
-        'orm-registration',
-        ...relationTaskIds,
-        ...featureTaskIds,
-      ],
+      dependsOn: ['orm-registration', ...relationTaskIds, ...featureTaskIds],
       allowedFiles: [
         'src/app.module.ts',
         'src/business-workflows/business-workflows.module.ts',
@@ -965,17 +1099,18 @@ export class NestJsTargetAdapter implements TargetAdapter {
     );
     const dtoSource = dtoFiles.map((file) => file.content).join('\n');
     const requestFields = this.endpointSkeleton(entity).flatMap((endpoint) =>
-      (Array.isArray(endpoint.requestFields) ? endpoint.requestFields : []).filter(
-        (field) => {
-          const name = typeof field.name === 'string' ? field.name : '';
-          return (
-            Boolean(name) &&
-            !new RegExp(`(?:\\{|:)${this.escapeRegExp(name)}(?:\\}|/|$)`).test(
-              endpoint.path,
-            )
-          );
-        },
-      ),
+      (Array.isArray(endpoint.requestFields)
+        ? endpoint.requestFields
+        : []
+      ).filter((field) => {
+        const name = typeof field.name === 'string' ? field.name : '';
+        return (
+          Boolean(name) &&
+          !new RegExp(`(?:\\{|:)${this.escapeRegExp(name)}(?:\\}|/|$)`).test(
+            endpoint.path,
+          )
+        );
+      }),
     );
     const problems: string[] = [];
     for (const field of requestFields) {
@@ -985,10 +1120,37 @@ export class NestJsTargetAdapter implements TargetAdapter {
         new RegExp(`\\b${this.escapeRegExp(name)}([!?]?):\\s*`, 'm'),
       );
       if (!property) {
-        problems.push(`src/${slug}/dto: request field ${name} is absent from generated DTOs`);
+        problems.push(
+          `src/${slug}/dto: request field ${name} is absent from generated DTOs`,
+        );
       } else if (field.required === true && property[1] === '?') {
-        problems.push(`src/${slug}/dto: required request field ${name} is optional`);
+        problems.push(
+          `src/${slug}/dto: required request field ${name} is optional`,
+        );
       }
+      const propertyWithDecorators = dtoSource.match(
+        new RegExp(
+          `((?:\\s*@(?:Is|Min|Max|Length|Matches)[^\\n]*\\n)+\\s*${this.escapeRegExp(name)}[!?]?:)`,
+          'm',
+        ),
+      );
+      if (!propertyWithDecorators) {
+        problems.push(
+          `src/${slug}/dto: request field ${name} needs class-validator constraints`,
+        );
+      }
+    }
+    const updateDto = dtoFiles.find((file) =>
+      file.path.endsWith(`update-${slug}.dto.ts`),
+    )?.content;
+    if (
+      updateDto &&
+      updateDto.includes('PartialType') &&
+      !updateDto.includes("from '@nestjs/swagger'")
+    ) {
+      problems.push(
+        `src/${slug}/dto: update DTO must import PartialType from @nestjs/swagger`,
+      );
     }
     return problems;
   }
@@ -1025,13 +1187,19 @@ export class NestJsTargetAdapter implements TargetAdapter {
         const key = identity ? `${pairKey}::${identity}` : pairKey;
         const candidate = { source: entity.name, target, declaration };
         const existing = ranked.get(key);
-        if (!existing || this.relationRank(declaration) > this.relationRank(existing.declaration)) {
+        if (
+          !existing ||
+          this.relationRank(declaration) >
+            this.relationRank(existing.declaration)
+        ) {
           ranked.set(key, candidate);
         }
       }
     }
     return [...ranked.values()].sort((left, right) =>
-      `${left.source}:${left.target}`.localeCompare(`${right.source}:${right.target}`),
+      `${left.source}:${left.target}`.localeCompare(
+        `${right.source}:${right.target}`,
+      ),
     );
   }
 
@@ -1048,7 +1216,9 @@ export class NestJsTargetAdapter implements TargetAdapter {
       relation.id,
       relation.name,
       relation.relationName,
-    ].find((value): value is string => typeof value === 'string' && value.length > 0);
+    ].find(
+      (value): value is string => typeof value === 'string' && value.length > 0,
+    );
     if (explicitId) return this.normalizeName(explicitId);
 
     const properties = [
@@ -1058,7 +1228,10 @@ export class NestJsTargetAdapter implements TargetAdapter {
       relation.inverseProperty,
       relation.foreignKey,
     ]
-      .filter((value): value is string => typeof value === 'string' && value.length > 0)
+      .filter(
+        (value): value is string =>
+          typeof value === 'string' && value.length > 0,
+      )
       .map((value) => this.normalizeName(value))
       .sort();
     return properties.join('::');
@@ -1442,24 +1615,46 @@ export class NestJsTargetAdapter implements TargetAdapter {
             "const { AppModule } = require('./dist/app.module');",
             '(async () => {',
             '  const app = await NestFactory.create(AppModule, { logger: false });',
-            '  app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));',
+            '  app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));',
             "  const config = new DocumentBuilder().setTitle('smoke').setVersion('1').build();",
-            '  SwaggerModule.createDocument(app, config);',
+            '  const document = SwaggerModule.createDocument(app, config);',
+            '  const resolveSchema = (schema) => {',
+            "    const ref = schema && schema['$ref'];",
+            "    return ref ? document.components?.schemas?.[ref.split('/').pop()] : schema;",
+            '  };',
+            '  for (const [route, pathItem] of Object.entries(document.paths)) {',
+            '    for (const [method, operation] of Object.entries(pathItem || {})) {',
+            "      if (!['get', 'post', 'put', 'patch', 'delete'].includes(method)) continue;",
+            '      const successResponses = Object.keys(operation.responses || {}).filter((status) => /^2\\d\\d$/.test(status));',
+            '      if (successResponses.length === 0) throw new Error(`${method.toUpperCase()} ${route} has no documented 2xx response`);',
+            "      const bodySchema = operation.requestBody?.content?.['application/json']?.schema;",
+            '      if (bodySchema) {',
+            '        const resolved = resolveSchema(bodySchema);',
+            '        if (!resolved || Object.keys(resolved.properties || {}).length === 0) throw new Error(`${method.toUpperCase()} ${route} has an empty request schema`);',
+            '      }',
+            '    }',
+            '  }',
             '  const localDataSource = app.get(DataSource);',
             "  const appModuleSource = fs.readFileSync('./src/app.module.ts', 'utf8');",
-            "  const productionType = appModuleSource.match(/type:\\s*['\"](postgres|mysql)['\"]/)?.[1];",
+            '  const productionType = appModuleSource.match(/type:\\s*[\'"](postgres|mysql)[\'"]/)?.[1];',
             "  if (!productionType) throw new Error('Production database type was not found');",
             '  const metadataSource = new DataSource({ type: productionType, entities: localDataSource.entityMetadatas.map((metadata) => metadata.target) });',
             '  await metadataSource.buildMetadatas();',
             "  await app.listen(0, '127.0.0.1');",
             '  const address = app.getHttpServer().address();',
-            "  const response = await fetch(`http://127.0.0.1:${address.port}/health`);",
-            "  if (!response.ok) throw new Error(`GET /health failed: ${response.status}`);",
+            '  const response = await fetch(`http://127.0.0.1:${address.port}/health`);',
+            '  if (!response.ok) throw new Error(`GET /health failed: ${response.status}`);',
+            '  for (const [route, pathItem] of Object.entries(document.paths)) {',
+            "    if (route.includes('{') || !pathItem?.get || route === '/health') continue;",
+            '    const listResponse = await fetch(`http://127.0.0.1:${address.port}${route}`);',
+            '    if (listResponse.status >= 500) throw new Error(`GET ${route} failed: ${listResponse.status}`);',
+            '  }',
             '  await app.close();',
             '})().catch((error) => { console.error(error); process.exit(1); });',
           ].join('\n'),
         ],
-        description: 'Start the HTTP app, build Swagger, call health, and close',
+        description:
+          'Start the HTTP app, build Swagger, call health, and close',
         env: {
           DATABASE_URL: null,
           NODE_ENV: 'test',
@@ -1519,9 +1714,9 @@ export class NestJsTargetAdapter implements TargetAdapter {
     nextContent: string,
   ): string {
     const importDeclarations = this.mergeImportDeclarations([
-        ...this.extractImportDeclarations(existingContent),
-        ...this.extractImportDeclarations(nextContent),
-      ]).sort((left, right) => {
+      ...this.extractImportDeclarations(existingContent),
+      ...this.extractImportDeclarations(nextContent),
+    ]).sort((left, right) => {
       if (left.includes("'@nestjs/common'")) return -1;
       if (right.includes("'@nestjs/common'")) return 1;
       return left.localeCompare(right);
@@ -1635,8 +1830,10 @@ export class NestJsTargetAdapter implements TargetAdapter {
     }
     return [
       ...other,
-      ...Array.from(namedByModule, ([moduleName, names]) =>
-        `import { ${[...names].sort().join(', ')} } from '${moduleName}';`,
+      ...Array.from(
+        namedByModule,
+        ([moduleName, names]) =>
+          `import { ${[...names].sort().join(', ')} } from '${moduleName}';`,
       ),
     ];
   }

@@ -3781,6 +3781,7 @@ type TestAgentResult = {
 type AgentProgressEvent = {
   stage: 'started' | 'completed' | 'failed'
   message: string
+  messageKey?: string
   detail?: Record<string, unknown>
 }
 
@@ -6117,7 +6118,7 @@ function TestStep({
   onTestResultChange: (result: TestAgentResult | null) => void
   workspace: GenerateWorkspace | null
 }) {
-  const { t } = useI18n()
+  const { language, t } = useI18n()
   const [testResult, setTestResult] = useState<TestAgentResult | null>(initialTestResult)
   const [isRunningAgent, setIsRunningAgent] = useState(false)
   const [testError, setTestError] = useState<string | null>(null)
@@ -6151,6 +6152,8 @@ function TestStep({
   }
 
   function setProgressLine(progress: AgentProgressEvent) {
+    const progressMessage =
+      typeof progress.messageKey === 'string' ? progress.messageKey : progress.message
     const attempt =
       typeof progress.detail?.attempt === 'number' ? progress.detail.attempt : 1
     const targetFile =
@@ -6165,22 +6168,22 @@ function TestStep({
       total: targetTotal,
     }
     const localizedMessage =
-      progress.message === 'Generating individual Jest test'
+      progressMessage === 'Generating individual Jest test'
         ? t('test.progress.generateOne', targetProgressValues)
-        : progress.message === 'Applying individual Jest test'
+        : progressMessage === 'Applying individual Jest test'
           ? t('test.progress.applyOne', targetProgressValues)
-          : progress.message === 'Verifying individual Jest test'
+          : progressMessage === 'Verifying individual Jest test'
             ? t('test.progress.verifyOne', targetProgressValues)
-            : localizeTestProgress(progress.message)
+            : localizeTestProgress(progressMessage)
     const isTestPhase =
-      progress.message !== 'Starting NestJS test agent' &&
-      (Object.prototype.hasOwnProperty.call(testProgressMap, progress.message) ||
-        progress.message === 'Generating individual Jest test' ||
-        progress.message === 'Applying individual Jest test' ||
-        progress.message === 'Verifying individual Jest test')
+      progressMessage !== 'Starting NestJS test agent' &&
+      (Object.prototype.hasOwnProperty.call(testProgressMap, progressMessage) ||
+        progressMessage === 'Generating individual Jest test' ||
+        progressMessage === 'Applying individual Jest test' ||
+        progressMessage === 'Verifying individual Jest test')
     const isFinalVerification =
-      progress.message === 'NestJS test verification completed' ||
-      progress.message === 'NestJS test verification failed'
+      progressMessage === 'NestJS test verification completed' ||
+      progressMessage === 'NestJS test verification failed'
 
     if (isFinalVerification) {
       return
@@ -6241,7 +6244,7 @@ function TestStep({
     setTerminalLines((currentLines) => {
       const lastLine = currentLines[currentLines.length - 1]
 
-      if (progress.message === 'Generating individual Jest test details') {
+      if (progressMessage === 'Generating individual Jest test details') {
         return [
           ...currentLines,
           ...[...generatedTestDetails, ...patchedTestDetails].map((line) =>
@@ -6336,6 +6339,7 @@ function TestStep({
       appDir: nestResult.appPath,
       projectDir: workspace.workspacePath,
       maxAttempts: '20',
+      language,
     })
     if (token) {
       params.set('token', token)

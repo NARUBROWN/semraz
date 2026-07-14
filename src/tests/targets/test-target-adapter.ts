@@ -15,7 +15,7 @@ export interface TestTargetAdapter {
   readonly target: TargetFramework;
 
   /** Harness files (test runner config, scripts, dev deps) to write before generation. */
-  harnessFiles(appDir: string): Promise<GeneratedFile[]>;
+  harnessFiles(appDir: string, spec?: TestSpec): Promise<GeneratedFile[]>;
 
   /** Whether a generated file path is a test file this adapter accepts. */
   isTestFile(path: string): boolean;

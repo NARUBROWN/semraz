@@ -93,6 +93,9 @@ describe('NestJsTargetAdapter', () => {
     expect(prompt).toContain('Create User');
     expect(prompt).toContain('/users/:id');
     expect(prompt).toContain('allowedFiles');
+    expect(prompt).toContain('ParseUUIDPipe');
+    expect(prompt).toContain('raw foreign-key violation');
+    expect(prompt).toContain('@ApiOperation');
   });
 
   it('plans a dedicated endpoint workflow task for non-CRUD endpoints', () => {
@@ -309,19 +312,63 @@ describe('NestJsTargetAdapter', () => {
     const crudTask = adapter
       .planBuildTasks(spec)
       .tasks.find((task) => task.id === 'feature-user-crud')!;
-    expect(
-      adapter.validateTaskFiles({
-        spec,
-        task: crudTask,
-        files: [
-          {
-            path: 'src/user/user.controller.ts',
-            content:
-              "@Controller('users')\nclass UserController { @Post() create() {} }",
-          },
-        ],
-      }),
-    ).toContain('controller is missing GET /users/:id');
+    const crudProblems = adapter.validateTaskFiles({
+      spec,
+      task: crudTask,
+      files: [
+        {
+          path: 'src/user/user.controller.ts',
+          content:
+            "@Controller('users')\nclass UserController { @Post() create() {} }",
+        },
+      ],
+    });
+    expect(crudProblems).toContain('controller is missing GET /users/:id');
+    expect(crudProblems).toContain('User controller must declare @ApiTags');
+    expect(crudProblems).toContain(
+      'User controller must document every route with @ApiOperation',
+    );
+  });
+
+  it('requires server-managed entity timestamps', () => {
+    const timestampSpec: AppSpec = {
+      ...spec,
+      entities: [
+        {
+          ...spec.entities[0],
+          fields: [
+            ...spec.entities[0].fields,
+            { name: 'createdAt', type: 'datetime', required: true },
+            { name: 'updatedAt', type: 'datetime', required: true },
+          ],
+        },
+      ],
+    };
+    const task = adapter
+      .planBuildTasks(timestampSpec)
+      .tasks.find((candidate) => candidate.id === 'entity-user-fields')!;
+    const problems = adapter.validateTaskFiles({
+      spec: timestampSpec,
+      task,
+      files: [
+        {
+          path: 'src/user/user.entity.ts',
+          content: [
+            '@Column() id!: string;',
+            '@Column() email!: string;',
+            '@Column() createdAt!: Date;',
+            '@Column() updatedAt!: Date;',
+          ].join('\n'),
+        },
+      ],
+    });
+
+    expect(problems).toContain(
+      'User.createdAt must use @CreateDateColumn so it is server-managed',
+    );
+    expect(problems).toContain(
+      'User.updatedAt must use @UpdateDateColumn so it is server-managed',
+    );
   });
 
   it('uses the endpoint skeleton as an exact API allowlist', () => {
@@ -353,16 +400,17 @@ describe('NestJsTargetAdapter', () => {
   });
 
   it('rejects missing global routes and less common Nest route decorators', () => {
-    const files = adapter.bootstrapFiles(spec).filter(
-      (file) => file.path !== 'src/app.controller.ts',
-    );
+    const files = adapter
+      .bootstrapFiles(spec)
+      .filter((file) => file.path !== 'src/app.controller.ts');
     const problems = adapter.validateApplicationFiles({
       spec,
       files: [
         ...files,
         {
           path: 'src/app.controller.ts',
-          content: "@Controller() class AppController { @Get('health') health() {} }",
+          content:
+            "@Controller() class AppController { @Get('health') health() {} }",
         },
         {
           path: 'src/user/user.entity.ts',
@@ -370,7 +418,8 @@ describe('NestJsTargetAdapter', () => {
         },
         {
           path: 'src/user/user.controller.ts',
-          content: "@Controller('users') class C { @Post() create() {} @All('escape') escape() {} }",
+          content:
+            "@Controller('users') class C { @Post() create() {} @All('escape') escape() {} }",
         },
       ],
     });
@@ -457,6 +506,24 @@ describe('NestJsTargetAdapter', () => {
     );
   });
 
+  it('bootstraps strict validation and Swagger DTO metadata generation', () => {
+    const files = new Map(
+      adapter.bootstrapFiles(spec).map((file) => [file.path, file.content]),
+    );
+
+    expect(files.get('src/main.ts')).toContain('forbidNonWhitelisted: true');
+    expect(files.get('nest-cli.json')).toContain('@nestjs/swagger');
+    expect(files.get('nest-cli.json')).toContain('classValidatorShim');
+  });
+
+  it('uses the final E2E gate to reject empty OpenAPI request schemas', () => {
+    const command = adapter.e2eCheckCommands()[0].args.join('\n');
+
+    expect(command).toContain('has an empty request schema');
+    expect(command).toContain('has no documented 2xx response');
+    expect(command).toContain('listResponse.status >= 500');
+  });
+
   it('rejects routes invented by any controller during the final contract gate', () => {
     const bootstrap = adapter.bootstrapFiles(spec);
     const problems = adapter.validateApplicationFiles({
@@ -465,8 +532,7 @@ describe('NestJsTargetAdapter', () => {
         ...bootstrap,
         {
           path: 'src/user/user.entity.ts',
-          content:
-            "@Column()\nid!: string;\n@Column()\nemail!: string;",
+          content: '@Column()\nid!: string;\n@Column()\nemail!: string;',
         },
         {
           path: 'src/user/user.controller.ts',
@@ -510,9 +576,7 @@ describe('NestJsTargetAdapter', () => {
     expect(merged.content).toContain('TypeOrmModule.forRoot(databaseConfig)');
     expect(merged.content).toContain('UserModule');
     expect(merged.content).toContain('TypeOrmModule.forFeature([User])');
-    expect(
-      merged.content.match(/from '@nestjs\/typeorm';/g),
-    ).toHaveLength(1);
+    expect(merged.content.match(/from '@nestjs\/typeorm';/g)).toHaveLength(1);
     expect(merged.content).toContain(
       'import { TypeOrmModule, TypeOrmModuleOptions }',
     );

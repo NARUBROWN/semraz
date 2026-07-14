@@ -28,7 +28,10 @@ export class TestCodeGenerationAgent {
     patchFailures?: FilePatchFailure[];
     targetFile?: string;
   }): Promise<TestGenerationOutput> {
-    const harnessFiles = await params.adapter.harnessFiles(params.appDir);
+    const harnessFiles = await params.adapter.harnessFiles(
+      params.appDir,
+      params.spec,
+    );
 
     const result = await this.llm.generateJson<{
       files?: GeneratedFile[];

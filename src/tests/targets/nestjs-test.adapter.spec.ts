@@ -31,6 +31,48 @@ describe('NestJsTestAdapter', () => {
     ]);
   });
 
+  it('adds a managed Supertest E2E contract suite to every generated app', async () => {
+    const workspace = {
+      resolveInside: (_rootDir: string, filePath: string) => filePath,
+      readTextFile: jest
+        .fn()
+        .mockResolvedValue(
+          JSON.stringify({
+            name: 'generated-app',
+            scripts: {},
+            devDependencies: {},
+          }),
+        ),
+    } as unknown as WorkspaceWriter;
+    const files = await new NestJsTestAdapter(workspace).harnessFiles('/app', {
+      projectName: 'Generated app',
+      summary: '',
+      endpoints: [
+        {
+          entityName: 'Vehicle',
+          operationName: 'Create vehicle',
+          method: 'POST',
+          path: '/vehicles',
+          description: '',
+          requestFields: [{ name: 'name', type: 'string' }],
+          responseFields: [],
+        },
+      ],
+      businessRules: [],
+      sourceDocs: [],
+    });
+    const byPath = new Map(files.map((file) => [file.path, file.content]));
+
+    expect(
+      JSON.parse(byPath.get('package.json')!).scripts['test:e2e'],
+    ).toContain('test/app.e2e-spec.ts');
+    expect(byPath.get('test/app.e2e-spec.ts')).toContain(
+      "import request from 'supertest'",
+    );
+    expect(byPath.get('test/app.e2e-spec.ts')).toContain('Create vehicle');
+    expect(byPath.get('test/app.e2e-spec.ts')).toContain('propertiesOf');
+  });
+
   it('builds a Jest command that verifies only one selected spec', () => {
     expect(
       adapter.targetExecutionCommands('src/vehicle/vehicle.service.spec.ts'),
@@ -138,9 +180,18 @@ describe('NestJsTestAdapter', () => {
       ],
       {
         relevantFiles: [
-          { path: 'src/traffic/traffic.controller.ts', content: 'export class TrafficController {}' },
-          { path: 'src/traffic/traffic.service.ts', content: 'export class TrafficService {}' },
-          { path: 'src/traffic/traffic.entity.ts', content: 'export class Traffic {}' },
+          {
+            path: 'src/traffic/traffic.controller.ts',
+            content: 'export class TrafficController {}',
+          },
+          {
+            path: 'src/traffic/traffic.service.ts',
+            content: 'export class TrafficService {}',
+          },
+          {
+            path: 'src/traffic/traffic.entity.ts',
+            content: 'export class Traffic {}',
+          },
         ],
         symbols: [],
         previousFailures: [],
@@ -177,7 +228,10 @@ describe('NestJsTestAdapter', () => {
       ],
       {
         relevantFiles: [
-          { path: 'src/app.controller.ts', content: 'export class AppController {}' },
+          {
+            path: 'src/app.controller.ts',
+            content: 'export class AppController {}',
+          },
         ],
         symbols: [],
         previousFailures: [],
@@ -289,6 +343,7 @@ describe('NestJsTestAdapter', () => {
       );
       expect(adapter.isPatchablePath('src/app.module.ts')).toBe(false);
       expect(adapter.isPatchablePath('package.json')).toBe(false);
+      expect(adapter.isPatchablePath('test/app.e2e-spec.ts')).toBe(false);
     });
   });
 

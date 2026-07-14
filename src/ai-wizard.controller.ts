@@ -91,14 +91,16 @@ function buildCurrentState(request: AiWizardRequest) {
   if (request.step === 'erd') {
     return {
       confirmedProject: request.project,
-      confirmedPlanning: (request.project as { planning?: unknown } | undefined)?.planning,
+      confirmedPlanning: (request.project as { planning?: unknown } | undefined)
+        ?.planning,
     };
   }
 
   if (request.step === 'operations') {
     return {
       confirmedProject: request.project,
-      confirmedPlanning: (request.project as { planning?: unknown } | undefined)?.planning,
+      confirmedPlanning: (request.project as { planning?: unknown } | undefined)
+        ?.planning,
       confirmedErd: {
         entities: request.entities,
         relations: request.relations,
@@ -180,6 +182,9 @@ function buildStepInstruction(step: AiWizardStep) {
     'Include normal CRUD-style APIs and fully specify every complex capability called for by the confirmed planning. Do not reduce a complex feature to one generic endpoint.',
     'For each complex feature, create all necessary custom endpoints for its workflow. For example, a notification capability may need preference management, eligible-recipient lookup, dispatch or queue submission, delivery-status or retry handling, inbox listing, and read or dismiss actions when each is relevant to the confirmed product.',
     'For every custom endpoint, write requirements only for validation, state transitions, duplicate handling, failure behavior, asynchronous processing, integrations, or access rules when those concerns are explicitly required by the confirmed Planning and represented by the ERD.',
+    'Treat primary keys, createdAt, and updatedAt as server-managed fields: exclude them from create/update requestFieldIds and payloadFieldIds unless the confirmed product explicitly requires clients to provide them; include them in responses when useful.',
+    'For relation foreign keys in create/update requests, require the referenced record to exist and specify a 404 failure instead of allowing a raw database foreign-key error.',
+    'When the confirmed ERD or Planning implies uniqueness, enum membership, non-negative quantities, non-empty text, or state-transition rules, state those constraints explicitly in requirements so DTO, service, and database validation can enforce them consistently.',
     'Use a shared, specific feature label in each related endpoint description so the workflow can be recognized as one capability.',
     'Use only entityId and field ids that exist in the provided ERD.',
     'The confirmed Project, Planning, and ERD together are the implementation boundary. Every endpoint description and requirement must trace to a named Planning capability and use only the ERD entities, fields, and relations needed for it.',
@@ -199,21 +204,32 @@ function sanitizeErdDraft(draft: ErdDraftRecord) {
     ? (draft.relations.filter(isRecord) as ErdDraftRecord[])
     : [];
   const entities = rawEntities.map((entity, entityIndex) => {
-    const entityId = normalizeId(stringValue(entity.id) || stringValue(entity.name) || `entity_${entityIndex + 1}`);
+    const entityId = normalizeId(
+      stringValue(entity.id) ||
+        stringValue(entity.name) ||
+        `entity_${entityIndex + 1}`,
+    );
     const rawFields = Array.isArray(entity.fields)
       ? (entity.fields.filter(isRecord) as ErdDraftRecord[])
       : [];
     const fields = rawFields.map((field, fieldIndex) => {
-      const fieldName = sanitizeFieldName(stringValue(field.name)) || (fieldIndex === 0 ? 'id' : `field${fieldIndex + 1}`);
+      const fieldName =
+        sanitizeFieldName(stringValue(field.name)) ||
+        (fieldIndex === 0 ? 'id' : `field${fieldIndex + 1}`);
 
       return {
         id: normalizeId(stringValue(field.id) || `${entityId}_${fieldName}`),
         name: fieldName,
         type: normalizeFieldType(stringValue(field.type)),
         isPrimaryKey: Boolean(field.isPrimaryKey) || fieldName === 'id',
-        isNotNull: Boolean(field.isNotNull) || Boolean(field.isPrimaryKey) || fieldName === 'id',
+        isNotNull:
+          Boolean(field.isNotNull) ||
+          Boolean(field.isPrimaryKey) ||
+          fieldName === 'id',
         ...(Boolean(field.isForeignKey) ? { isForeignKey: true } : {}),
-        ...(stringValue(field.referencesEntityId) ? { referencesEntityId: stringValue(field.referencesEntityId) } : {}),
+        ...(stringValue(field.referencesEntityId)
+          ? { referencesEntityId: stringValue(field.referencesEntityId) }
+          : {}),
       };
     });
 
@@ -245,14 +261,23 @@ function sanitizeErdDraft(draft: ErdDraftRecord) {
     lookup.set(entity.name.toLowerCase(), entity.id);
   });
 
-  const resolveEntityId = (value: unknown) => lookup.get(stringValue(value).toLowerCase()) ?? '';
+  const resolveEntityId = (value: unknown) =>
+    lookup.get(stringValue(value).toLowerCase()) ?? '';
 
   entities.forEach((entity) => {
     entity.fields = entity.fields.map((field) => {
       const referencesEntityId = resolveEntityId(field.referencesEntityId);
 
-      if (!field.isForeignKey || !referencesEntityId || referencesEntityId === entity.id) {
-        const { isForeignKey, referencesEntityId: _referencesEntityId, ...plainField } = field;
+      if (
+        !field.isForeignKey ||
+        !referencesEntityId ||
+        referencesEntityId === entity.id
+      ) {
+        const {
+          isForeignKey,
+          referencesEntityId: _referencesEntityId,
+          ...plainField
+        } = field;
         return plainField;
       }
 
@@ -295,8 +320,11 @@ function sanitizeErdDraft(draft: ErdDraftRecord) {
           ? targetId
           : targetId;
     const foreignKeyOwnerId =
-      requestedOwnerId === sourceId || requestedOwnerId === targetId ? requestedOwnerId : inferredOwnerId;
-    const referencedEntityId = foreignKeyOwnerId === sourceId ? targetId : sourceId;
+      requestedOwnerId === sourceId || requestedOwnerId === targetId
+        ? requestedOwnerId
+        : inferredOwnerId;
+    const referencedEntityId =
+      foreignKeyOwnerId === sourceId ? targetId : sourceId;
     const ownerEntity = entityById.get(foreignKeyOwnerId);
     const referencedEntity = entityById.get(referencedEntityId);
 
@@ -305,8 +333,11 @@ function sanitizeErdDraft(draft: ErdDraftRecord) {
     }
 
     const foreignKeyFieldName =
-      sanitizeFieldName(stringValue(relation.foreignKeyFieldName)) || toForeignKeyName(referencedEntity.name);
-    const existingField = ownerEntity.fields.find((field) => field.name === foreignKeyFieldName);
+      sanitizeFieldName(stringValue(relation.foreignKeyFieldName)) ||
+      toForeignKeyName(referencedEntity.name);
+    const existingField = ownerEntity.fields.find(
+      (field) => field.name === foreignKeyFieldName,
+    );
 
     if (existingField) {
       existingField.type = 'uuid';
@@ -340,12 +371,16 @@ function sanitizeErdDraft(draft: ErdDraftRecord) {
     return validRelations;
   };
 
-  const relations = rawRelations.reduce<Array<Record<string, unknown>>>(addRelation, []);
+  const relations = rawRelations.reduce<Array<Record<string, unknown>>>(
+    addRelation,
+    [],
+  );
 
   entities.forEach((entity) => {
     entity.fields.forEach((field, fieldIndex) => {
       const referencedEntityId =
-        resolveEntityId(field.referencesEntityId) || inferReferencedEntityIdFromField(field.name, entity.id, lookup);
+        resolveEntityId(field.referencesEntityId) ||
+        inferReferencedEntityIdFromField(field.name, entity.id, lookup);
 
       if (!referencedEntityId || referencedEntityId === entity.id) {
         return;
@@ -369,18 +404,28 @@ function sanitizeErdDraft(draft: ErdDraftRecord) {
   });
 
   const relationForeignKeys = new Set(
-    relations.map((relation) => `${relation.foreignKeyOwnerId}:${relation.foreignKeyFieldName}`),
+    relations.map(
+      (relation) =>
+        `${relation.foreignKeyOwnerId}:${relation.foreignKeyFieldName}`,
+    ),
   );
 
   return {
     entities: entities.map((entity) => ({
       ...entity,
       fields: entity.fields.map((field) => {
-        if (!field.isForeignKey || relationForeignKeys.has(`${entity.id}:${field.name}`)) {
+        if (
+          !field.isForeignKey ||
+          relationForeignKeys.has(`${entity.id}:${field.name}`)
+        ) {
           return field;
         }
 
-        const { isForeignKey, referencesEntityId: _referencesEntityId, ...plainField } = field;
+        const {
+          isForeignKey,
+          referencesEntityId: _referencesEntityId,
+          ...plainField
+        } = field;
         return plainField;
       }),
     })),
@@ -401,7 +446,11 @@ function numberValue(value: unknown, fallback: number) {
 }
 
 function normalizeFieldType(value: string) {
-  return ['uuid', 'string', 'int', 'datetime', 'boolean', 'enum'].includes(value) ? value : 'string';
+  return ['uuid', 'string', 'int', 'datetime', 'boolean', 'enum'].includes(
+    value,
+  )
+    ? value
+    : 'string';
 }
 
 function sanitizeFieldName(value: string) {
@@ -423,7 +472,11 @@ function normalizeId(value: string) {
     .toLowerCase();
 }
 
-function inferReferencedEntityIdFromField(fieldName: string, ownerEntityId: string, lookup: Map<string, string>) {
+function inferReferencedEntityIdFromField(
+  fieldName: string,
+  ownerEntityId: string,
+  lookup: Map<string, string>,
+) {
   const normalizedField = normalizeId(fieldName);
 
   if (!normalizedField.endsWith('_id') && !normalizedField.endsWith('id')) {
