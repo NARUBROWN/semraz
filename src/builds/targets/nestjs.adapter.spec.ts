@@ -47,6 +47,15 @@ describe('NestJsTargetAdapter', () => {
     assumptions: [],
   };
 
+  it('installs local build tools even when the server runs in production mode', () => {
+    expect(adapter.installCommands()).toEqual([
+      expect.objectContaining({
+        command: 'npm',
+        args: ['install', '--include=dev'],
+      }),
+    ]);
+  });
+
   it('plans feature tasks only for entities with explicit endpoints', () => {
     const featureTasks = adapter
       .planBuildTasks(spec)

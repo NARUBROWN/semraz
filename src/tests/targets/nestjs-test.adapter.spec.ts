@@ -10,6 +10,15 @@ describe('NestJsTestAdapter', () => {
       { path: 'src/health-metric/health-metric.controller.spec.ts', content },
     ])[0].content;
 
+  it('installs local test tools even when the server runs in production mode', () => {
+    expect(adapter.setupCommands()).toEqual([
+      expect.objectContaining({
+        command: 'npm',
+        args: ['install', '--include=dev'],
+      }),
+    ]);
+  });
+
   it('injects a missing @nestjs/common exception import into a spec', () => {
     // Reproduces "ReferenceError: NotFoundException is not defined": the spec
     // uses the exception but never imports it.

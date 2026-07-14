@@ -962,7 +962,7 @@ export class NestJsTestAdapter implements TestTargetAdapter {
     return [
       {
         command: 'npm',
-        args: ['install'],
+        args: ['install', '--include=dev'],
         description: 'Install test dependencies',
       },
     ];

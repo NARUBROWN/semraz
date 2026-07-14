@@ -5352,23 +5352,25 @@ function OperationsStep({
           <h3>{t('dashboard.entities')}</h3>
           <span className="autosave-pill">{t('ops.mapped', { count: entities.length })}</span>
         </div>
-        {entities.map((entity) => (
-          <button
-            key={entity.id}
-            className={entity.id === selectedEntity?.id ? 'selected' : ''}
-            type="button"
-            onClick={() => setSelectedEntityId(entity.id)}
-          >
-            <strong>{entity.name}</strong>
-            <span>
-              {t('ops.count', {
-                count: operations.filter(
-                  (operation) => operation.entityId === entity.id && operation.enabled,
-                ).length,
-              })}
-            </span>
-          </button>
-        ))}
+        <div className="entity-operation-buttons">
+          {entities.map((entity) => (
+            <button
+              key={entity.id}
+              className={entity.id === selectedEntity?.id ? 'selected' : ''}
+              type="button"
+              onClick={() => setSelectedEntityId(entity.id)}
+            >
+              <strong>{entity.name}</strong>
+              <span>
+                {t('ops.count', {
+                  count: operations.filter(
+                    (operation) => operation.entityId === entity.id && operation.enabled,
+                  ).length,
+                })}
+              </span>
+            </button>
+          ))}
+        </div>
       </section>
 
       <section className="flow-panel operation-config-panel">

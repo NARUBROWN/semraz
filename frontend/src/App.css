@@ -1923,6 +1923,12 @@ button:disabled {
   align-content: start;
 }
 
+.entity-operation-buttons {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
 .entity-operation-list button {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -2313,6 +2319,20 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
+  .operations-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .entity-operation-buttons {
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  }
+
+  .operation-editor-list {
+    max-height: none;
+    overflow: visible;
+    padding-right: 0;
+  }
+
   .flow-body {
     min-height: auto;
   }
@@ -2434,6 +2454,88 @@ button:disabled {
     min-width: 38px;
     min-height: 34px;
     padding: 0;
+  }
+
+  .workspace-body {
+    padding: 14px 10px 20px;
+  }
+
+  .flow-shell {
+    padding: 12px;
+  }
+
+  .ai-wizard-panel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ai-wizard-actions {
+    width: 100%;
+    justify-items: stretch;
+  }
+
+  .entity-operation-list {
+    overflow: hidden;
+  }
+
+  .entity-operation-buttons {
+    display: flex;
+    gap: 8px;
+    margin: 0 -2px;
+    padding: 2px 2px 8px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+    scrollbar-width: none;
+  }
+
+  .entity-operation-buttons::-webkit-scrollbar {
+    display: none;
+  }
+
+  .entity-operation-list .entity-operation-buttons button {
+    flex: 0 0 min(78vw, 240px);
+    scroll-snap-align: start;
+  }
+
+  .operation-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .operation-path-field,
+  .operation-description-field {
+    grid-column: auto;
+  }
+
+  .operation-editor-title,
+  .custom-field-heading {
+    align-items: flex-start;
+  }
+
+  .custom-field-row {
+    grid-template-columns: minmax(0, 1fr) minmax(96px, 0.6fr);
+  }
+
+  .custom-field-row button {
+    grid-column: 1 / -1;
+    justify-self: stretch;
+  }
+
+  .operation-config-panel,
+  .operation-preview-panel,
+  .entity-operation-list {
+    padding: 14px;
+  }
+
+  .api-preview,
+  .api-preview-block,
+  .api-preview code {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .api-preview code {
+    white-space: pre;
+    overflow-x: auto;
   }
 
   .overview-banner {

@@ -1392,7 +1392,7 @@ export class NestJsTargetAdapter implements TargetAdapter {
     return [
       {
         command: 'npm',
-        args: ['install'],
+        args: ['install', '--include=dev'],
         description: 'Install Node dependencies',
       },
     ];
