@@ -124,6 +124,27 @@ describe('ApplicationBuildGraph final-build repair helpers', () => {
     });
   });
 
+  describe('cleanGeneratedFiles', () => {
+    const graph = makeGraph({});
+
+    it('rejects a non-array AI repair response with a useful error', () => {
+      expect(() => graph.cleanGeneratedFiles({ path: 'src/app.ts' })).toThrow(
+        'Invalid AI repair response: "files" must be an array (received object)',
+      );
+    });
+
+    it('keeps only safe generated file entries', () => {
+      expect(
+        graph.cleanGeneratedFiles([
+          { path: 'src/app.ts', content: 'export {};' },
+          { path: '../escape.ts', content: 'bad' },
+          { path: 'src/missing-content.ts' },
+          null,
+        ]),
+      ).toEqual([{ path: 'src/app.ts', content: 'export {};' }]);
+    });
+  });
+
   it('keeps a marked class member inside its original class', () => {
     const graph = makeGraph({});
     const previous = [

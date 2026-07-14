@@ -1,9 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { spawn } from 'node:child_process';
 import { CommandResult, CommandSpec } from '../types/build.types';
 
 @Injectable()
 export class CommandRunner {
+  private readonly logger = new Logger(CommandRunner.name);
+
   async runAll(
     cwd: string,
     commands: CommandSpec[],
@@ -15,6 +17,17 @@ export class CommandRunner {
       const result = await this.run(cwd, spec, timeoutMs);
       results.push(result);
       if (!result.success) {
+        this.logger.error(
+          [
+            `Generated application command failed: ${result.command}`,
+            `Working directory: ${cwd}`,
+            `Exit code: ${result.exitCode ?? 'spawn error or timeout'}`,
+            result.stderr.trim() ? `stderr:\n${result.stderr.trim()}` : '',
+            result.stdout.trim() ? `stdout:\n${result.stdout.trim()}` : '',
+          ]
+            .filter(Boolean)
+            .join('\n'),
+        );
         break;
       }
     }

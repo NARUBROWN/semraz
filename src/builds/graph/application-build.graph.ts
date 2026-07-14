@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  InternalServerErrorException,
+} from '@nestjs/common';
 import { END, START, StateGraph, Annotation } from '@langchain/langgraph';
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
@@ -2133,9 +2137,21 @@ export class ApplicationBuildGraph {
       }));
   }
 
-  private cleanGeneratedFiles(files: GeneratedFile[]) {
+  private cleanGeneratedFiles(files: unknown): GeneratedFile[] {
+    if (!Array.isArray(files)) {
+      const received = files === null ? 'null' : typeof files;
+      throw new InternalServerErrorException(
+        `Invalid AI repair response: "files" must be an array (received ${received})`,
+      );
+    }
+
     return files.filter(
-      (file) =>
+      (file): file is GeneratedFile =>
+        typeof file === 'object' &&
+        file !== null &&
+        'path' in file &&
+        'content' in file &&
+        typeof file.path === 'string' &&
         file.path &&
         typeof file.content === 'string' &&
         !this.isUnsafeGeneratedPath(file.path),
