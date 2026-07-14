@@ -2512,7 +2512,7 @@ button:disabled {
 
   .entity-scroll-hint i {
     display: inline-block;
-    color: #205bb8;
+    color: #f5490f;
     font-size: 18px;
     font-style: normal;
     line-height: 1;
@@ -2527,6 +2527,7 @@ button:disabled {
     overflow-x: auto;
     overscroll-behavior-x: contain;
     scroll-snap-type: x proximity;
+    scroll-padding-inline: 12px;
     scrollbar-width: none;
   }
 
@@ -2537,6 +2538,8 @@ button:disabled {
   .entity-operation-list .entity-operation-buttons button {
     flex: 0 0 min(70vw, 220px);
     scroll-snap-align: start;
+    outline-color: transparent;
+    outline-offset: 0;
     transition:
       transform 160ms ease,
       border-color 160ms ease,
@@ -2545,19 +2548,28 @@ button:disabled {
   }
 
   .entity-operation-list .entity-operation-buttons button.selected {
-    border-color: #205bb8;
-    background: #eef4fb;
+    border-color: #f2a88e;
+    background: #fff2ec;
     box-shadow:
-      inset 0 0 0 1px #205bb8,
-      0 8px 16px rgba(32, 91, 184, 0.16);
+      inset 0 0 0 1px #f2a88e,
+      0 8px 16px rgba(245, 73, 15, 0.12);
     transform: translateY(-2px);
   }
 
   .entity-operation-list .entity-operation-buttons button:not(.selected):hover {
-    border-color: #9dbce8;
-    background: #f7faff;
-    box-shadow: 0 6px 14px rgba(32, 91, 184, 0.1);
+    border-color: #f3c5b5;
+    background: #fffaf5;
+    box-shadow:
+      inset 0 0 0 1px #f3c5b5,
+      0 6px 14px rgba(245, 73, 15, 0.08);
     transform: translateY(-2px);
+  }
+
+  .entity-operation-list .entity-operation-buttons button:focus-visible {
+    outline-color: transparent;
+    box-shadow:
+      inset 0 0 0 2px #f5490f,
+      0 8px 16px rgba(245, 73, 15, 0.12);
   }
 
   .entity-operation-list .entity-operation-buttons button:active {
