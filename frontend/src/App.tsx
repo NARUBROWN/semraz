@@ -290,6 +290,7 @@ Generate a reliable backend from a reviewed Semraz spec.
     'erd.addColumn': 'Add column',
     'ops.mapped': '{count} mapped',
     'ops.count': '{count} ops',
+    'ops.swipeEntities': 'Swipe sideways to browse entities',
     'ops.entityOperations': '{entity} operations',
     'ops.operations': 'Operations',
     'ops.addCustom': 'Add custom',
@@ -620,6 +621,7 @@ Generate a reliable backend from a reviewed Semraz spec.
     'erd.addColumn': '컬럼 추가',
     'ops.mapped': '{count}개 매핑됨',
     'ops.count': '{count}개 작업',
+    'ops.swipeEntities': '좌우로 밀어 엔티티를 선택하세요',
     'ops.entityOperations': '{entity} 작업',
     'ops.operations': '작업',
     'ops.addCustom': '엔드포인트 추가',
@@ -5352,6 +5354,10 @@ function OperationsStep({
           <h3>{t('dashboard.entities')}</h3>
           <span className="autosave-pill">{t('ops.mapped', { count: entities.length })}</span>
         </div>
+        <p className="entity-scroll-hint">
+          <i aria-hidden="true">↔</i>
+          {t('ops.swipeEntities')}
+        </p>
         <div className="entity-operation-buttons">
           {entities.map((entity) => (
             <button
