@@ -6224,7 +6224,7 @@ function TestStep({
     if (token) {
       params.set('token', token)
     }
-    const source = new EventSource(`${apiBaseUrl}/tests/events?${params.toString()}`)
+    const source = new EventSource(`${apiBaseUrl}/api/tests/events?${params.toString()}`)
 
     source.addEventListener('progress', (event) => {
       const progress = JSON.parse(event.data) as AgentProgressEvent

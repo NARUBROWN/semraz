@@ -40,7 +40,7 @@ export class CommandRunner {
       const child = spawn(spec.command, spec.args, {
         cwd,
         shell: false,
-        env: process.env,
+        env: this.commandEnvironment(spec),
       });
 
       let stdout = '';
@@ -79,6 +79,18 @@ export class CommandRunner {
   private appendBounded(current: string, next: string) {
     const combined = current + next;
     return combined.length > 40_000 ? combined.slice(-40_000) : combined;
+  }
+
+  private commandEnvironment(spec: CommandSpec): NodeJS.ProcessEnv {
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    for (const [name, value] of Object.entries(spec.env ?? {})) {
+      if (value === null) {
+        delete env[name];
+      } else {
+        env[name] = value;
+      }
+    }
+    return env;
   }
 
   private formatCommand(spec: CommandSpec) {

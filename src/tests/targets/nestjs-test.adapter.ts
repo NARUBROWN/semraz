@@ -974,6 +974,11 @@ export class NestJsTestAdapter implements TestTargetAdapter {
         command: 'npm',
         args: ['run', 'test:cov'],
         description: 'Run generated Jest tests with coverage',
+        env: {
+          DATABASE_URL: null,
+          NODE_ENV: 'test',
+          PORT: null,
+        },
       },
     ];
   }

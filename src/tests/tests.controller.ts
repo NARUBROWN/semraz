@@ -6,7 +6,7 @@ import { TestRequestDto } from './dto/test-request.dto';
 import { TestsService } from './tests.service';
 
 @ApiTags('tests')
-@Controller('tests')
+@Controller(['api/tests', 'tests'])
 export class TestsController {
   constructor(private readonly testsService: TestsService) {}
 
@@ -41,8 +41,16 @@ export class TestsController {
     response.flushHeaders?.();
 
     let isClosed = false;
+    const heartbeat = setInterval(() => {
+      if (!isClosed && !response.writableEnded) {
+        response.write(': heartbeat\n\n');
+      }
+    }, 15_000);
+    heartbeat.unref();
+
     response.on('close', () => {
       isClosed = true;
+      clearInterval(heartbeat);
     });
 
     const send = (event: string, data: unknown) => {
@@ -50,8 +58,7 @@ export class TestsController {
         return;
       }
 
-      response.write(`event: ${event}\n`);
-      response.write(`data: ${JSON.stringify(data)}\n\n`);
+      response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     };
 
     send('progress', {
@@ -78,6 +85,7 @@ export class TestsController {
             : 'Unexpected NestJS test agent error.',
       });
     } finally {
+      clearInterval(heartbeat);
       if (!isClosed && !response.writableEnded) {
         response.end();
       }

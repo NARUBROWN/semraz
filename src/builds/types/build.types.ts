@@ -87,6 +87,8 @@ export interface CommandSpec {
   command: string;
   args: string[];
   description: string;
+  /** Per-command environment overrides. A null value removes an inherited variable. */
+  env?: Record<string, string | null>;
 }
 
 export interface CommandResult {

@@ -250,6 +250,25 @@ describe('NestJsTargetAdapter', () => {
     expect(command.args.join('\n')).toContain("app.listen(0, '127.0.0.1')");
     expect(command.args.join('\n')).toContain('/health');
     expect(command.args.join('\n')).toContain('app.close()');
+    expect(command.env).toEqual({
+      DATABASE_URL: null,
+      NODE_ENV: 'test',
+      PORT: null,
+    });
+  });
+
+  it('repairs article-inserted exception throws deterministically', () => {
+    const [file] = adapter.normalizeGeneratedFiles([
+      {
+        path: 'src/waste-data/waste-data.service.ts',
+        content:
+          'throw a NotFoundException(`missing`);\nthrow an BadRequestException(`bad`);',
+      },
+    ]);
+
+    expect(file.content).toBe(
+      'throw new NotFoundException(`missing`);\nthrow new BadRequestException(`bad`);',
+    );
   });
 
   it('removes driver-specific timestamp metadata for the dual database runtime', () => {

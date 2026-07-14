@@ -19,6 +19,18 @@ describe('NestJsTestAdapter', () => {
     ]);
   });
 
+  it('runs generated tests without inheriting the Semraz production database', () => {
+    expect(adapter.executionCommands()).toEqual([
+      expect.objectContaining({
+        env: {
+          DATABASE_URL: null,
+          NODE_ENV: 'test',
+          PORT: null,
+        },
+      }),
+    ]);
+  });
+
   it('injects a missing @nestjs/common exception import into a spec', () => {
     // Reproduces "ReferenceError: NotFoundException is not defined": the spec
     // uses the exception but never imports it.

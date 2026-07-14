@@ -1203,7 +1203,16 @@ export class NestJsTargetAdapter implements TargetAdapter {
       if (file.path.endsWith('.entity.ts')) {
         return {
           ...file,
-          content: this.normalizePortableColumnTypes(file.content),
+          content: this.normalizeCommonTypescriptSyntax(
+            this.normalizePortableColumnTypes(file.content),
+          ),
+        };
+      }
+
+      if (file.path.endsWith('.ts')) {
+        return {
+          ...file,
+          content: this.normalizeCommonTypescriptSyntax(file.content),
         };
       }
 
@@ -1451,8 +1460,20 @@ export class NestJsTargetAdapter implements TargetAdapter {
           ].join('\n'),
         ],
         description: 'Start the HTTP app, build Swagger, call health, and close',
+        env: {
+          DATABASE_URL: null,
+          NODE_ENV: 'test',
+          PORT: null,
+        },
       },
     ];
+  }
+
+  private normalizeCommonTypescriptSyntax(content: string): string {
+    return content.replace(
+      /\bthrow\s+(?:a|an)\s+([A-Z][A-Za-z0-9_]*Exception)\s*\(/g,
+      'throw new $1(',
+    );
   }
 
   private toKebabCase(value: string) {
