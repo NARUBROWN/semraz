@@ -1,4 +1,6 @@
-import { Body, Controller, Post } from '@nestjs/common';
+import { Body, Controller, Post, Req, UseGuards } from '@nestjs/common';
+import { AccessTokenGuard } from './auth/guards/access-token.guard';
+import type { AuthenticatedRequest } from './auth/auth.types';
 import { OpenAiJsonClient } from './builds/llm/openai-json.client';
 
 type AiWizardStep = 'project' | 'planning' | 'erd' | 'operations';
@@ -17,16 +19,26 @@ export class AiWizardController {
   constructor(private readonly llm: OpenAiJsonClient) {}
 
   @Post('wizard')
-  async generateWizardDraft(@Body() request: AiWizardRequest) {
+  @UseGuards(AccessTokenGuard)
+  async generateWizardDraft(
+    @Req() httpRequest: AuthenticatedRequest,
+    @Body() request: AiWizardRequest,
+  ) {
+    const userId = httpRequest.auth?.sub;
     const includeCurrentState = request.step !== 'project';
     const currentState = buildCurrentState(request);
 
     const draft = await this.llm.generateJson({
+      // Ideation benefits from more variation than implementation work. Code
+      // generation continues to use OPENAI_MODEL (gpt-5-codex).
+      model: 'gpt-4o-mini',
       system: [
         'You are Semraz AI Wizard, a senior backend architect for a design-first NestJS backend generator.',
         'Return only valid JSON. Do not include markdown fences.',
         'Use concise, implementation-ready names. Prefer uuid ids, camelCase fields, and explicit PK/NN/FK flags.',
         'Never include explanations outside the requested JSON shape.',
+        'For every downstream stage, the confirmed upstream Semraz state is a contract: refine and implement it, but never add a product capability, data concept, integration, policy, or workflow that is not explicitly stated or strictly required to represent an explicitly stated capability.',
+        'Do not infer common product features from convention. If a requirement cannot be traced to the confirmed contract, omit it rather than guessing.',
       ].join('\n'),
       user: [
         buildLanguageInstruction(request.language),
@@ -40,7 +52,8 @@ export class AiWizardController {
             ]
           : []),
       ].join('\n'),
-      temperature: request.step === 'project' ? 0.9 : 0.2,
+      temperature: request.step === 'project' ? 1.25 : 0.2,
+      context: { userId, caller: `ai-wizard:${request.step}` },
     });
 
     if (request.step === 'erd') {
@@ -57,7 +70,7 @@ function buildLanguageInstruction(language: AiWizardRequest['language']) {
       'Output language: Korean.',
       'All user-facing natural-language values must be written in Korean, including project descriptions, planning purpose, constraints, operation labels, and operation descriptions.',
       'Keep code identifiers in conventional English: ids, entity ids, field names, API paths, HTTP methods, enum values, and JSON property names must remain ASCII/camelCase/kebab-case as appropriate.',
-      'Entity names may remain concise English domain model names such as User, Order, HealthMetric, Project, and Task.',
+      'Entity names may remain concise English domain model names that fit the confirmed product.',
     ].join('\n');
   }
 
@@ -103,8 +116,13 @@ function buildStepInstruction(step: AiWizardStep) {
       'Return JSON shape:',
       '{ "project": { "name": string, "description": string, "database": "PostgreSQL" | "MySQL" } }',
       'Generate a fresh, random backend product idea. Do not refer to or reuse any current project text.',
-      'Vary the domain across attempts, such as healthcare operations, logistics, education, fintech, creator tools, HR, IoT, hospitality, or B2B SaaS.',
-      'The draft should describe a concrete initial backend product idea clearly.',
+      'Prefer surprising but buildable product domains over common demo apps.',
+      'Do not default to health trackers, commerce/order systems, task managers, booking apps, or generic member dashboards unless the idea has an unusually specific angle.',
+      'Vary the domain across attempts, such as urban operations, legal workflows, climate data, warehouse robotics, creator monetization, field inspections, local government services, industrial IoT, research labs, hospitality ops, or niche B2B SaaS.',
+      'The project name and description should feel like a specific startup backend, not a tutorial sample.',
+      'The description must be 3-5 concrete sentences. State the primary users, the domain data they create or manage, and the outcome they receive.',
+      'Include at least 3 distinct product capabilities with explicit actions and outputs, such as ingesting a named data source, validating a submission, assigning work, calculating a result, issuing an alert, or producing an audit-ready record.',
+      'Avoid vague claims such as "manage efficiently", "provide insights", or "support monitoring" unless the description also explains exactly what is managed, analyzed, or monitored and what the backend returns or triggers.',
     ].join('\n');
   }
 
@@ -114,6 +132,9 @@ function buildStepInstruction(step: AiWizardStep) {
       'Return JSON shape:',
       '{ "planning": { "purpose": string, "constraints": string } }',
       'The purpose must explicitly reflect the confirmed project name, description, framework, and database.',
+      'Write the purpose as a short product overview followed by 4-6 newline-separated feature bullets. Each bullet must name a concrete user or system action, the domain object/data involved, and the resulting behavior or output.',
+      'Cover only the end-to-end flows explicitly stated in the confirmed Project description. Do not add common capabilities such as notifications, access control, reporting, integrations, or audit history unless the Project explicitly requires them.',
+      'Do not use generic feature statements such as "user management" or "data management" by themselves. Specify what the user does, which records are affected, and what the backend must return, update, or trigger.',
       'constraints must be newline-separated bullet lines and include code convention and generation boundaries.',
       'Do not invent a different product domain than the confirmed Project step.',
     ].join('\n');
@@ -128,9 +149,19 @@ function buildStepInstruction(step: AiWizardStep) {
       'ErdField shape: { "id": string, "name": string, "type": "uuid" | "string" | "int" | "datetime" | "boolean" | "enum", "isPrimaryKey": boolean, "isNotNull": boolean, "isForeignKey"?: boolean, "referencesEntityId"?: string }',
       'ErdRelation shape: { "id": string, "sourceId": string, "targetId": string, "sourceCardinality": "1" | "N", "targetCardinality": "1" | "N", "direction": "one-way" | "two-way", "foreignKeyOwnerId"?: string, "foreignKeyFieldName"?: string }',
       'Use positions in a large canvas around x=120..1400 and y=160..760.',
+      'Treat every feature bullet in the confirmed Planning purpose as an ERD coverage requirement. Before writing JSON, map each feature to the domain records, lifecycle state, and relationships it needs; then include those models in the ERD.',
+      'First identify the product domain, core workflows, and persisted concepts from the confirmed state. Then create all entities required to implement that specific product, not only the primary CRUD record.',
+      'Model the data needed for complete workflows: configuration or preference records, domain rules, assignments or recipients, requests or jobs, lifecycle/status fields, event or delivery attempts, and immutable history records whenever the confirmed feature requires them.',
+      'For example, when the plan requires notifications or alerts, include the relevant rule or trigger, recipient preference, notification/inbox record, delivery attempt or delivery status, and relations between them when those concepts are needed by the stated workflow. Do not use this example unless notifications or alerts are in the confirmed state.',
+      'Represent important workflow states with an enum status field and timestamps such as createdAt, updatedAt, scheduledAt, processedAt, readAt, or failedAt where they are meaningful. Include error or retry data when the planned behavior depends on it.',
+      'Produce a complete but focused model, normally 3-8 entities for a feature-rich product. A small plan may require fewer, but never omit a persisted concept needed by a stated feature merely to keep the ERD short.',
+      'Perform a final coverage check before responding: every Planning feature must be supported by at least one entity, field, or relation, and every complex workflow must have enough records to track its state and history.',
+      'Treat the confirmed state as a hard domain boundary: entity names, fields, and relationships must be directly supported by or reasonably necessary for its project description and planning notes.',
+      'Do not reuse a generic sample schema. In particular, never create HealthMetric, health-record fields, airQuality, noiseLevel, User -> HealthMetric, or Project -> Task unless the confirmed state explicitly describes that domain or workflow.',
+      'Do not add a generic User, Account, Project, Task, Order, or Customer entity unless the confirmed state makes that concept necessary.',
       'Every entity must have an id uuid primary key field. Add useful FK fields that match relations.',
       'When an entity has a field like userId, orderId, projectId, or another <entityName>Id field, create the matching relation to that entity.',
-      'For owner-style domain pairs such as User -> HealthMetric, User -> Profile, Customer -> Order, Project -> Task, create a 1:N relation unless the domain clearly requires 1:1.',
+      'For a genuine owner-style domain pair, create a 1:N relation unless the confirmed domain clearly requires 1:1.',
       'A foreign key is valid only when referencesEntityId matches an entity id in the returned entities array.',
       'Every relation sourceId, targetId, and foreignKeyOwnerId must match returned entity ids exactly.',
       'foreignKeyFieldName must exist as a uuid FK field on foreignKeyOwnerId and reference the opposite entity.',
@@ -144,10 +175,15 @@ function buildStepInstruction(step: AiWizardStep) {
     'Create recommended API operation specifications from all confirmed upstream steps: Project, Planning, and ERD.',
     'Return JSON shape:',
     '{ "operations": BackendOperation[] }',
-    'BackendOperation shape: { "id": string, "entityId": string, "kind": "crud" | "custom", "label": string, "method": "GET" | "POST" | "PUT" | "PATCH" | "DELETE", "path": string, "enabled": boolean, "payloadFieldIds": string[], "requestFieldIds": string[], "responseFieldIds": string[], "requestCustomFields": CustomField[], "responseCustomFields": CustomField[], "description": string }',
+    'BackendOperation shape: { "id": string, "entityId": string, "kind": "crud" | "custom", "label": string, "method": "GET" | "POST" | "PUT" | "PATCH" | "DELETE", "path": string, "enabled": boolean, "payloadFieldIds": string[], "requestFieldIds": string[], "responseFieldIds": string[], "requestCustomFields": CustomField[], "responseCustomFields": CustomField[], "description": string, "requirements": string }',
     'CustomField shape: { "id": string, "name": string, "type": string }',
-    'Include normal CRUD-style APIs and 1-3 high-value domain workflow APIs when the domain suggests them.',
+    'Include normal CRUD-style APIs and fully specify every complex capability called for by the confirmed planning. Do not reduce a complex feature to one generic endpoint.',
+    'For each complex feature, create all necessary custom endpoints for its workflow. For example, a notification capability may need preference management, eligible-recipient lookup, dispatch or queue submission, delivery-status or retry handling, inbox listing, and read or dismiss actions when each is relevant to the confirmed product.',
+    'For every custom endpoint, write requirements only for validation, state transitions, duplicate handling, failure behavior, asynchronous processing, integrations, or access rules when those concerns are explicitly required by the confirmed Planning and represented by the ERD.',
+    'Use a shared, specific feature label in each related endpoint description so the workflow can be recognized as one capability.',
     'Use only entityId and field ids that exist in the provided ERD.',
+    'The confirmed Project, Planning, and ERD together are the implementation boundary. Every endpoint description and requirement must trace to a named Planning capability and use only the ERD entities, fields, and relations needed for it.',
+    'Do not introduce a new requirement merely because it is common in backend products. If a capability cannot be represented by the confirmed contract, omit the endpoint or requirement instead of inventing supporting concepts.',
     'API descriptions must reflect the confirmed project purpose and planning constraints.',
     'Do not introduce new entities or fields. Use the confirmed ERD exactly.',
   ].join('\n');

@@ -22,6 +22,14 @@ type EndpointSpec = {
   responseFields?: Array<Record<string, unknown>>;
 };
 
+type RelationSkeleton = {
+  source: string;
+  target: string;
+  declaration: Record<string, unknown>;
+};
+
+const RELATION_MAP_BATCH_SIZE = 10;
+
 @Injectable()
 export class NestJsTargetAdapter implements TargetAdapter {
   readonly target = TargetFramework.NestJS;
@@ -34,7 +42,7 @@ export class NestJsTargetAdapter implements TargetAdapter {
   readonly bootstrapGuidance = [
     'Generate a buildable NestJS TypeScript backend shell.',
     'Include package.json, tsconfig files, nest-cli.json, src/main.ts, src/app.module.ts, .env.example, and README.md.',
-    'Use NestJS 10, TypeScript 5, @types/node 22, reflect-metadata 0.2, class-validator 0.14, class-transformer 0.5, @nestjs/typeorm 10, typeorm 0.3, and sql.js.',
+    'Use NestJS 10, TypeScript 5, @types/node 22, reflect-metadata 0.2, class-validator 0.14, class-transformer 0.5, @nestjs/typeorm 10, typeorm 0.3, pg, and sql.js.',
     'Use "nest build" for the build script, not plain "tsc".',
     'Do not implement business entities yet unless required for the app to compile.',
     'Set up validation pipe and a simple health endpoint or root endpoint.',
@@ -42,6 +50,7 @@ export class NestJsTargetAdapter implements TargetAdapter {
   ].join('\n');
 
   bootstrapFiles(spec: AppSpec): GeneratedFile[] {
+    const productionDatabase = this.productionDatabaseType(spec);
     const projectSlug = this.toKebabCase(
       spec.projectName || 'generated-backend',
     );
@@ -70,6 +79,8 @@ export class NestJsTargetAdapter implements TargetAdapter {
               'reflect-metadata': '^0.2.2',
               rxjs: '^7.8.1',
               'sql.js': '^1.12.0',
+              pg: '^8.13.1',
+              mysql2: '^3.11.5',
               typeorm: '^0.3.20',
             },
             devDependencies: {
@@ -170,14 +181,25 @@ export class NestJsTargetAdapter implements TargetAdapter {
           "import { TypeOrmModule } from '@nestjs/typeorm';",
           "import { AppController } from './app.controller';",
           '',
-          '@Module({',
-          '  imports: [',
-          '    TypeOrmModule.forRoot({',
-          "      type: 'sqljs',",
+          'const databaseConfig = process.env.DATABASE_URL',
+          '  ? {',
+          `      type: '${productionDatabase}' as const,`,
+          '      url: process.env.DATABASE_URL,',
+          '      synchronize: false,',
+          '      autoLoadEntities: true,',
+          '      retryAttempts: 1,',
+          '    }',
+          '  : {',
+          "      type: 'sqljs' as const,",
           '      autoSave: false,',
           '      synchronize: true,',
-          '      entities: [],',
-          '    }),',
+          '      autoLoadEntities: true,',
+          '      retryAttempts: 1,',
+          '    };',
+          '',
+          '@Module({',
+          '  imports: [',
+          '    TypeOrmModule.forRoot(databaseConfig),',
           '  ],',
           '  controllers: [AppController],',
           '  providers: [],',
@@ -205,7 +227,13 @@ export class NestJsTargetAdapter implements TargetAdapter {
       },
       {
         path: '.env.example',
-        content: ['PORT=3000', ''].join('\n'),
+        content: [
+          'PORT=3000',
+          productionDatabase === 'mysql'
+            ? 'DATABASE_URL=mysql://root:root@localhost:3306/app'
+            : 'DATABASE_URL=postgresql://postgres:postgres@localhost:5432/app',
+          '',
+        ].join('\n'),
       },
       {
         path: 'README.md',
@@ -239,15 +267,25 @@ export class NestJsTargetAdapter implements TargetAdapter {
     const entityFieldTaskIds = spec.entities.map(
       (entity) => `entity-${this.toKebabCase(entity.name)}-fields`,
     );
-    const hasRelations = spec.entities.some(
-      (entity) => entity.relations.length > 0,
+    const relationSkeleton = this.relationSkeleton(spec.entities);
+    const relationBatches = this.chunk(relationSkeleton, RELATION_MAP_BATCH_SIZE);
+    const relationTaskIds = relationBatches.map((_batch, index) =>
+      relationBatches.length === 1 ? 'entity-relations' : `entity-relations-map-${index + 1}`,
     );
-    if (hasRelations) {
-      tasks.push(this.entityRelationsTask(spec.entities, entityFieldTaskIds));
-    }
+    relationBatches.forEach((batch, index) => {
+      tasks.push(
+        this.entityRelationsTask(
+          batch,
+          entityFieldTaskIds,
+          relationTaskIds[index],
+          index + 1,
+          relationBatches.length,
+        ),
+      );
+    });
 
     if (spec.entities.length > 0) {
-      tasks.push(this.ormRegistrationTask(spec.entities));
+      tasks.push(this.ormRegistrationTask(spec, relationTaskIds));
     }
 
     for (const entity of spec.entities.filter(
@@ -256,8 +294,13 @@ export class NestJsTargetAdapter implements TargetAdapter {
       tasks.push(this.crudFeatureTask(entity, spec.entities));
     }
 
-    if (this.hasBusinessWorkflowRequirements(spec)) {
-      tasks.push(this.businessWorkflowTask(spec.entities, hasRelations));
+    for (const entity of spec.entities) {
+      const nonCrudEndpoints = this.nonCrudEndpoints(entity);
+      if (nonCrudEndpoints.length > 0) {
+        tasks.push(
+          this.endpointWorkflowTask(entity, spec.entities, nonCrudEndpoints),
+        );
+      }
     }
 
     return { tasks };
@@ -284,6 +327,198 @@ export class NestJsTargetAdapter implements TargetAdapter {
     return hints;
   }
 
+  requiredTaskFiles(task: BuildTask): string[] {
+    switch (task.kind) {
+      case 'entity-fields':
+      case 'entity-relations':
+        return task.allowedFiles;
+      case 'orm-registration':
+        return ['src/app.module.ts'];
+      case 'crud-feature':
+        return task.allowedFiles;
+      case 'endpoint-workflow':
+        return task.allowedFiles.filter(
+          (file) =>
+            file.endsWith('.controller.ts') || file.endsWith('.service.ts'),
+        );
+      case 'business-workflow':
+        return task.allowedFiles.filter(
+          (file) =>
+            file === 'src/app.module.ts' ||
+            file.endsWith('.module.ts') ||
+            file.endsWith('.controller.ts') ||
+            file.endsWith('.service.ts'),
+        );
+      default:
+        return [];
+    }
+  }
+
+  validateTaskFiles(params: {
+    spec: AppSpec;
+    task: BuildTask;
+    files: GeneratedFile[];
+  }): string[] {
+    const problems: string[] = [];
+    const byPath = new Map(
+      params.files.map((file) => [file.path, file.content]),
+    );
+    const entity = params.task.targetEntity
+      ? params.spec.entities.find(
+          (candidate) => candidate.name === params.task.targetEntity,
+        )
+      : undefined;
+
+    if (params.task.kind === 'entity-fields' && entity) {
+      const slug = this.toKebabCase(entity.name);
+      const content = byPath.get(`src/${slug}/${slug}.entity.ts`) ?? '';
+      for (const field of entity.fields.filter(
+        (candidate) => candidate.required === true,
+      )) {
+        const name = typeof field.name === 'string' ? field.name : '';
+        if (!name) continue;
+        if (!new RegExp(`\\b${name}[!]?:\\s*`).test(content)) {
+          problems.push(`${entity.name}.${name} must be a required property`);
+        }
+        const column = content.match(
+          new RegExp(`@Column\\(([^)]*)\\)\\s*${name}[!?]?:`, 'm'),
+        )?.[1];
+        if (column && /nullable\s*:\s*true/.test(column)) {
+          problems.push(`${entity.name}.${name} cannot be nullable`);
+        }
+      }
+    }
+
+    if (
+      entity &&
+      (params.task.kind === 'crud-feature' ||
+        params.task.kind === 'endpoint-workflow')
+    ) {
+      const slug = this.toKebabCase(entity.name);
+      const controller = byPath.get(`src/${slug}/${slug}.controller.ts`) ?? '';
+      const base =
+        controller.match(/@Controller\(\s*['"]([^'"]*)['"]\s*\)/)?.[1] ?? '';
+      const routes = this.controllerRoutes(controller, base);
+      const expected = entity.endpoints
+        .filter((endpoint): endpoint is EndpointSpec =>
+          Boolean(endpoint.method && endpoint.path),
+        )
+        .filter((endpoint) =>
+          params.task.kind === 'crud-feature'
+            ? this.isConventionalCrudEndpoint(entity, endpoint)
+            : true,
+        );
+      const expectedRoutes = new Set(
+        expected.map(
+          (endpoint) =>
+            `${endpoint.method.toUpperCase()} ${this.normalizeEndpointPath(endpoint.path)}`,
+        ),
+      );
+      for (const endpoint of expected) {
+        const signature = `${endpoint.method.toUpperCase()} ${this.normalizeEndpointPath(endpoint.path)}`;
+        if (!routes.has(signature)) {
+          problems.push(`controller is missing ${signature}`);
+        }
+      }
+      for (const route of routes) {
+        if (!expectedRoutes.has(route)) {
+          problems.push(`controller exposes API not present in the endpoint skeleton: ${route}`);
+        }
+      }
+      problems.push(...this.validateDtoSkeleton(entity, params.files));
+    }
+
+    for (const file of params.files) {
+      if (/\bTODO\b|not implemented|placeholder/i.test(file.content)) {
+        problems.push(`${file.path} contains placeholder implementation`);
+      }
+    }
+    return problems;
+  }
+
+  validateApplicationFiles(params: {
+    spec: AppSpec;
+    files: GeneratedFile[];
+  }): string[] {
+    const problems: string[] = [];
+    for (const entity of params.spec.entities) {
+      const slug = this.toKebabCase(entity.name);
+      const entityPath = `src/${slug}/${slug}.entity.ts`;
+      const entityFile = params.files.find((file) => file.path === entityPath);
+      if (!entityFile) {
+        problems.push(`${entityPath}: required entity file is missing`);
+      } else {
+        problems.push(
+          ...this.validateTaskFiles({
+            spec: params.spec,
+            task: this.entityFieldsTask(entity),
+            files: [entityFile],
+          }).map((problem) => `${entityPath}: ${problem}`),
+        );
+      }
+
+      if (entity.endpoints.length > 0) {
+        const controllerPath = `src/${slug}/${slug}.controller.ts`;
+        const controller = params.files.find((file) => file.path === controllerPath);
+        if (!controller) {
+          problems.push(`${controllerPath}: endpoint controller is missing`);
+        } else {
+          problems.push(
+            ...this.validateEndpointSkeleton(entity, controller.content).map(
+              (problem) => `${controllerPath}: ${problem}`,
+            ),
+          );
+        }
+        problems.push(...this.validateDtoSkeleton(entity, params.files));
+      }
+    }
+    const appModule = params.files.find((file) => file.path === 'src/app.module.ts')?.content ?? '';
+    const productionDatabase = this.productionDatabaseType(params.spec);
+    if (!appModule.includes('DATABASE_URL') || !appModule.includes(`type: '${productionDatabase}'`) || !appModule.includes("type: 'sqljs'")) {
+      problems.push(`src/app.module.ts: must provide ${productionDatabase} DATABASE_URL config with SQL.js smoke fallback`);
+    }
+    const expectedGlobalRoutes = new Set([
+      'GET /health',
+      ...[...params.spec.endpoints, ...params.spec.entities.flatMap((entity) => entity.endpoints)]
+        .filter(
+          (endpoint): endpoint is EndpointSpec =>
+            typeof endpoint.method === 'string' &&
+            typeof endpoint.path === 'string',
+        )
+        .map(
+          (endpoint) =>
+            `${endpoint.method.toUpperCase()} ${this.normalizeEndpointPath(endpoint.path)}`,
+        ),
+    ]);
+    for (const controller of params.files.filter((file) =>
+      file.path.endsWith('.controller.ts'),
+    )) {
+      for (const route of this.controllerRoutes(controller.content)) {
+        if (!expectedGlobalRoutes.has(route)) {
+          problems.push(
+            `${controller.path}: exposes API absent from the global endpoint skeleton: ${route}`,
+          );
+        }
+      }
+    }
+    const actualGlobalRoutes = new Set(
+      params.files
+        .filter((file) => file.path.endsWith('.controller.ts'))
+        .flatMap((file) => [...this.controllerRoutes(file.content)]),
+    );
+    for (const route of expectedGlobalRoutes) {
+      if (!actualGlobalRoutes.has(route)) {
+        problems.push(`global endpoint skeleton is missing from generated controllers: ${route}`);
+      }
+    }
+    for (const file of params.files) {
+      if (/\bTODO\b|not implemented|placeholder/i.test(file.content)) {
+        problems.push(`${file.path}: contains placeholder implementation`);
+      }
+    }
+    return [...new Set(problems)];
+  }
+
   taskGenerationPrompt(params: {
     spec: AppSpec;
     task: BuildTask;
@@ -296,17 +531,36 @@ export class NestJsTargetAdapter implements TargetAdapter {
       'You must only create or modify files listed in currentTask.allowedFiles.',
       'If currentTask.allowedFiles does not include a file, do not return that file.',
       'Do not jump ahead to unrelated tasks.',
+      'Use Skeleton-of-Thought: first read the authoritative endpoint skeleton in currentTask.description, then expand only those routes into code.',
+      'The endpoint skeleton is the API source of truth. Never add a public controller route that is absent from it, even if generic CRUD would normally include it.',
       'Use NestJS 10, TypeScript 5, TypeORM 0.3, and @nestjs/typeorm 10.',
+      'Never add new packages to package.json or change dependency versions; generated code must only import packages already declared in the bootstrap package.json.',
+      'Do not use @nestjs/swagger decorators unless @nestjs/swagger is already declared in package.json.',
       'With TypeORM 0.3 repositories, never call repository.findOne(id); use repository.findOne({ where: { id } }) or findOneBy({ id }).',
+      'Service methods that look up a single entity by id (findOne, update, remove) must throw NotFoundException from @nestjs/common when the entity does not exist — never return null to the controller.',
       'Use definite assignment assertions for entity and DTO properties where needed, for example "id!: string".',
+      'Preserve ERD nullability exactly: fields marked required/NN must use non-optional properties and must never emit nullable: true; create DTOs must validate those fields as required.',
       'Keep code buildable with npm run build.',
+      'Never import a type, enum, or class from another generated file unless the code context explicitly shows that file exports it.',
+      'When a DTO needs an enum-like field whose enum lives in an entity file you cannot verify, declare the property as string (optionally a local string union) instead of importing from the entity.',
+      'When creating an entity from a DTO, call repository.create({ ...dto }) with an object-literal spread so TypeScript selects the single-entity overload.',
+      'Keep each DTO property type identical to the entity property it maps to (string stays string, Date stays Date); when they must differ, convert explicitly in the service before create/save.',
+      'For temporal entity fields, prefer a Date property with driver-inferred @Column() metadata. Never hard-code timestamp or datetime because the production driver and SQL.js fallback support different explicit type names.',
+      'Keep TypeOrmModule.forRoot configured with retryAttempts: 1 so smoke-check metadata failures fail fast.',
+      'If a previous failure shows TS2769 "No overload matches this call" on repository.create, do not pass the DTO directly; write const entity = this.repository.create(); then assign each property explicitly and save the entity.',
       'When currentTask.kind is "entity-relations", relation inverse-side lambdas must reference properties that actually exist on the related class.',
-      'When currentTask.kind is "entity-relations", update both sides of every relationship in the spec; if Payment has invoice => Invoice, Invoice must declare payments: Payment[] with @OneToMany.',
+      'When currentTask.kind is "entity-relations", update both sides of every relationship in the current task relation skeleton only; do not process relations assigned to other map shards.',
+      'When currentTask.kind is "entity-relations", return EVERY file listed in currentTask.allowedFiles in one response, each with complete final content; never return only a subset of the entity files.',
+      'When currentTask.kind is "entity-relations", every property referenced by an inverse-side lambda (e.g. x => x.user) must be declared in the returned content of that related entity file with the matching @ManyToOne/@OneToMany decorator.',
       'When a previous TypeScript error says Property "x" does not exist on type "Y", either change the inverse-side lambda to an existing property or add property "x" to class Y if Y is in currentTask.allowedFiles.',
       'When currentTask.kind is "business-workflow", implement only workflows that are explicitly supported by the normalized spec and existing entity files.',
       'When currentTask.kind is "business-workflow", create or update only the dedicated business-workflows module/controller/service/DTO files and AppModule registration.',
       'When currentTask.kind is "business-workflow", do not edit or replace existing entity CRUD services/controllers; preserve all generated CRUD features.',
       'When currentTask.kind is "business-workflow", never import or reference an entity that is not present in the normalized spec and generated source tree.',
+      'When currentTask.kind is "endpoint-workflow", implement every endpoint listed in currentTask.description and currentTask.doneCriteria, including its implementationRequirements from the normalized spec.',
+      'When currentTask.kind is "endpoint-workflow", update the existing feature controller/service/DTO files in currentTask.allowedFiles; preserve existing CRUD methods while adding or completing non-CRUD endpoint behavior.',
+      'When currentTask.kind is "endpoint-workflow", do not leave TODO, placeholder, stub, pseudo-code, empty method bodies, or comments that stand in for required behavior.',
+      'When currentTask.kind is "endpoint-workflow", if the spec does not provide a threshold, recipient, or rule detail, choose a conservative deterministic default from the available entity fields and document it in executable code, not as an unimplemented comment.',
       'Business workflow methods that update multiple tables must use TypeORM DataSource.transaction or an equivalent transaction manager.',
       'For stock workflows, InventoryBalance quantityOnHand and quantityReserved are the source of truth; reject insufficient or negative stock with BadRequestException.',
       'For sales shipping, create outbound StockMovement rows, update SalesOrder status, and create an Invoice in the same transaction.',
@@ -318,939 +572,18 @@ export class NestJsTargetAdapter implements TargetAdapter {
       'For workflow services, after manager.findOne calls, check for null and throw before reading or saving the entity so strict null checks pass.',
       'For one-to-one relationships, use singular inverse properties such as "invoice" instead of plural names unless the related class declares the plural property.',
       'If codeContext.previousFailures contains TypeScript errors, fix those exact errors first and preserve already working files.',
+      'Any // <semraz:user-code ...> ... // </semraz:user-code> block is user-owned: reproduce it byte-for-byte in the returned complete file and never move, edit, or remove it.',
+      'codeContext.fileContents holds the CURRENT content of existing generated files; treat it as the source of truth for what already exists, and when modifying one of those files start from that content instead of rewriting it from scratch.',
       '',
       'Current task:',
       JSON.stringify(params.task, null, 2),
       '',
-      'Full application spec:',
-      JSON.stringify(params.spec, null, 2),
+      'Task-scoped application spec (Map-Reduce projection):',
+      JSON.stringify(this.taskSpecView(params.spec, params.task), null, 2),
       '',
       'Code context:',
       JSON.stringify(params.context, null, 2),
     ].join('\n');
-  }
-
-  deterministicTaskFiles(params: {
-    spec: AppSpec;
-    task: BuildTask;
-    context: CodeContext;
-  }): GeneratedFile[] {
-    if (params.task.kind === 'entity-fields') {
-      const entity = this.findTaskEntity(params.spec, params.task);
-      return entity ? [this.entityFile(entity)] : [];
-    }
-
-    if (params.task.kind === 'orm-registration') {
-      return [this.appModuleFile(params.spec.entities, [])];
-    }
-
-    if (params.task.kind === 'crud-feature') {
-      const entity = this.findTaskEntity(params.spec, params.task);
-      return entity
-        ? this.crudFeatureFiles(params.spec, entity, params.context)
-        : [];
-    }
-
-    if (params.task.kind !== 'business-workflow') {
-      return [];
-    }
-
-    return [
-      {
-        path: 'src/app.module.ts',
-        content: [
-          "import { Module } from '@nestjs/common';",
-          "import { BusinessWorkflowsModule } from './business-workflows/business-workflows.module';",
-          '',
-          '@Module({',
-          '  imports: [BusinessWorkflowsModule],',
-          '})',
-          'export class AppModule {}',
-          '',
-        ].join('\n'),
-      },
-      {
-        path: 'src/business-workflows/business-workflows.module.ts',
-        content: [
-          "import { Module } from '@nestjs/common';",
-          "import { BusinessWorkflowsController } from './business-workflows.controller';",
-          "import { BusinessWorkflowsService } from './business-workflows.service';",
-          '',
-          '@Module({',
-          '  controllers: [BusinessWorkflowsController],',
-          '  providers: [BusinessWorkflowsService],',
-          '})',
-          'export class BusinessWorkflowsModule {}',
-          '',
-        ].join('\n'),
-      },
-      {
-        path: 'src/business-workflows/business-workflows.controller.ts',
-        content: [
-          "import { Body, Controller, Param, Post } from '@nestjs/common';",
-          "import { ApiTags } from '@nestjs/swagger';",
-          "import { BusinessWorkflowsService } from './business-workflows.service';",
-          "import { ConfirmSalesOrderDto } from './dto/confirm-sales-order.dto';",
-          "import { ReceivePurchaseOrderDto } from './dto/receive-purchase-order.dto';",
-          "import { RecordPaymentDto } from './dto/record-payment.dto';",
-          "import { ShipSalesOrderDto } from './dto/ship-sales-order.dto';",
-          '',
-          "@ApiTags('business-workflows')",
-          '@Controller()',
-          'export class BusinessWorkflowsController {',
-          '  constructor(private readonly service: BusinessWorkflowsService) {}',
-          '',
-          "  @Post('purchase-orders/:id/receive')",
-          "  receivePurchaseOrder(@Param('id') id: string, @Body() dto: ReceivePurchaseOrderDto) {",
-          '    return this.service.receivePurchaseOrder(id, dto);',
-          '  }',
-          '',
-          "  @Post('sales-orders/:id/confirm')",
-          "  confirmSalesOrder(@Param('id') id: string, @Body() dto: ConfirmSalesOrderDto) {",
-          '    return this.service.confirmSalesOrder(id, dto);',
-          '  }',
-          '',
-          "  @Post('sales-orders/:id/ship')",
-          "  shipSalesOrder(@Param('id') id: string, @Body() dto: ShipSalesOrderDto) {",
-          '    return this.service.shipSalesOrder(id, dto);',
-          '  }',
-          '',
-          "  @Post('payments')",
-          '  recordPayment(@Body() dto: RecordPaymentDto) {',
-          '    return this.service.recordPayment(dto);',
-          '  }',
-          '}',
-          '',
-        ].join('\n'),
-      },
-      {
-        path: 'src/business-workflows/business-workflows.service.ts',
-        content: [
-          "import { BadRequestException, Injectable } from '@nestjs/common';",
-          "import { DataSource } from 'typeorm';",
-          "import { InventoryBalance } from '../inventory-balance/inventory-balance.entity';",
-          "import { Invoice } from '../invoice/invoice.entity';",
-          "import { Payment } from '../payment/payment.entity';",
-          "import { PurchaseOrder } from '../purchase-order/purchase-order.entity';",
-          "import { PurchaseOrderLine } from '../purchase-order-line/purchase-order-line.entity';",
-          "import { SalesOrder } from '../sales-order/sales-order.entity';",
-          "import { SalesOrderLine } from '../sales-order-line/sales-order-line.entity';",
-          "import { StockMovement } from '../stock-movement/stock-movement.entity';",
-          "import { ConfirmSalesOrderDto } from './dto/confirm-sales-order.dto';",
-          "import { ReceivePurchaseOrderDto } from './dto/receive-purchase-order.dto';",
-          "import { RecordPaymentDto } from './dto/record-payment.dto';",
-          "import { ShipSalesOrderDto } from './dto/ship-sales-order.dto';",
-          '',
-          '@Injectable()',
-          'export class BusinessWorkflowsService {',
-          '  constructor(private readonly dataSource: DataSource) {}',
-          '',
-          '  async receivePurchaseOrder(id: string, _dto: ReceivePurchaseOrderDto) {',
-          '    return this.dataSource.transaction(async (manager) => {',
-          '      const purchaseOrder = await manager.findOne(PurchaseOrder, { where: { id } });',
-          "      if (!purchaseOrder) throw new BadRequestException('Purchase order not found');",
-          "      if (purchaseOrder.status !== 'approved') throw new BadRequestException('Only approved purchase orders can be received');",
-          '',
-          '      const lines = await manager.find(PurchaseOrderLine, { where: { purchaseOrderId: id } });',
-          "      if (lines.length === 0) throw new BadRequestException('Purchase order has no lines');",
-          '',
-          '      for (const line of lines) {',
-          "        if (line.quantity <= 0) throw new BadRequestException('Purchase order line quantity must be positive');",
-          '        let balance = await manager.findOne(InventoryBalance, {',
-          '          where: { itemId: line.itemId, warehouseId: line.warehouseId },',
-          '        });',
-          '        if (!balance) {',
-          '          balance = manager.create(InventoryBalance, {',
-          '            itemId: line.itemId,',
-          '            warehouseId: line.warehouseId,',
-          '            quantityOnHand: 0,',
-          '            quantityReserved: 0,',
-          '            updatedAt: new Date().toISOString(),',
-          '          });',
-          '        }',
-          '        balance.quantityOnHand += line.quantity;',
-          '        balance.updatedAt = new Date().toISOString();',
-          '        await manager.save(InventoryBalance, balance);',
-          '',
-          '        const movement = manager.create(StockMovement, {',
-          '          itemId: line.itemId,',
-          '          warehouseId: line.warehouseId,',
-          "          movementType: 'inbound',",
-          '          quantity: line.quantity,',
-          '          reason: `Received purchase order ${purchaseOrder.orderNumber}`,',
-          '          createdAt: new Date().toISOString(),',
-          '        });',
-          '        await manager.save(StockMovement, movement);',
-          '      }',
-          '',
-          "      purchaseOrder.status = 'received';",
-          '      await manager.save(PurchaseOrder, purchaseOrder);',
-          '      return purchaseOrder;',
-          '    });',
-          '  }',
-          '',
-          '  async confirmSalesOrder(id: string, _dto: ConfirmSalesOrderDto) {',
-          '    return this.dataSource.transaction(async (manager) => {',
-          '      const salesOrder = await manager.findOne(SalesOrder, { where: { id } });',
-          "      if (!salesOrder) throw new BadRequestException('Sales order not found');",
-          "      if (salesOrder.status !== 'draft') throw new BadRequestException('Only draft sales orders can be confirmed');",
-          '',
-          '      const lines = await manager.find(SalesOrderLine, { where: { salesOrderId: id } });',
-          "      if (lines.length === 0) throw new BadRequestException('Sales order has no lines');",
-          '',
-          '      for (const line of lines) {',
-          "        if (line.quantity <= 0) throw new BadRequestException('Sales order line quantity must be positive');",
-          '        const balance = await manager.findOne(InventoryBalance, {',
-          '          where: { itemId: line.itemId, warehouseId: line.warehouseId },',
-          '        });',
-          "        if (!balance) throw new BadRequestException('Inventory balance not found');",
-          '        const available = balance.quantityOnHand - balance.quantityReserved;',
-          "        if (available < line.quantity) throw new BadRequestException('Insufficient available stock');",
-          '        balance.quantityReserved += line.quantity;',
-          '        balance.updatedAt = new Date().toISOString();',
-          '        await manager.save(InventoryBalance, balance);',
-          '      }',
-          '',
-          "      salesOrder.status = 'confirmed';",
-          '      await manager.save(SalesOrder, salesOrder);',
-          '      return salesOrder;',
-          '    });',
-          '  }',
-          '',
-          '  async shipSalesOrder(id: string, _dto: ShipSalesOrderDto) {',
-          '    return this.dataSource.transaction(async (manager) => {',
-          '      const salesOrder = await manager.findOne(SalesOrder, { where: { id } });',
-          "      if (!salesOrder) throw new BadRequestException('Sales order not found');",
-          "      if (salesOrder.status !== 'confirmed') throw new BadRequestException('Only confirmed sales orders can be shipped');",
-          '',
-          '      const lines = await manager.find(SalesOrderLine, { where: { salesOrderId: id } });',
-          "      if (lines.length === 0) throw new BadRequestException('Sales order has no lines');",
-          '',
-          '      for (const line of lines) {',
-          '        const balance = await manager.findOne(InventoryBalance, {',
-          '          where: { itemId: line.itemId, warehouseId: line.warehouseId },',
-          '        });',
-          "        if (!balance) throw new BadRequestException('Inventory balance not found');",
-          '        if (balance.quantityOnHand < line.quantity || balance.quantityReserved < line.quantity) {',
-          "          throw new BadRequestException('Insufficient stock to ship sales order');",
-          '        }',
-          '        balance.quantityOnHand -= line.quantity;',
-          '        balance.quantityReserved -= line.quantity;',
-          '        if (balance.quantityOnHand < 0 || balance.quantityReserved < 0) {',
-          "          throw new BadRequestException('Inventory balance cannot become negative');",
-          '        }',
-          '        balance.updatedAt = new Date().toISOString();',
-          '        await manager.save(InventoryBalance, balance);',
-          '',
-          '        const movement = manager.create(StockMovement, {',
-          '          itemId: line.itemId,',
-          '          warehouseId: line.warehouseId,',
-          "          movementType: 'outbound',",
-          '          quantity: line.quantity,',
-          '          reason: `Shipped sales order ${salesOrder.orderNumber}`,',
-          '          createdAt: new Date().toISOString(),',
-          '        });',
-          '        await manager.save(StockMovement, movement);',
-          '      }',
-          '',
-          '      let invoice = await manager.findOne(Invoice, { where: { salesOrderId: id } });',
-          '      if (!invoice) {',
-          '        invoice = manager.create(Invoice, {',
-          '          invoiceNumber: `INV-${salesOrder.orderNumber}`,',
-          '          salesOrderId: salesOrder.id,',
-          '          customerId: salesOrder.customerId,',
-          "          status: 'issued',",
-          '          amountDue: salesOrder.totalAmount,',
-          '          amountPaid: 0,',
-          '          issuedAt: new Date().toISOString(),',
-          '        });',
-          '        await manager.save(Invoice, invoice);',
-          '      }',
-          '',
-          "      salesOrder.status = 'shipped';",
-          '      await manager.save(SalesOrder, salesOrder);',
-          '      return { salesOrder, invoice };',
-          '    });',
-          '  }',
-          '',
-          '  async recordPayment(dto: RecordPaymentDto) {',
-          '    return this.dataSource.transaction(async (manager) => {',
-          "      if (dto.amount <= 0) throw new BadRequestException('Payment amount must be positive');",
-          '      const invoice = await manager.findOne(Invoice, { where: { id: dto.invoiceId } });',
-          "      if (!invoice) throw new BadRequestException('Invoice not found');",
-          '      const nextPaid = invoice.amountPaid + dto.amount;',
-          '      if (nextPaid > invoice.amountDue) {',
-          "        throw new BadRequestException('Payment exceeds invoice amount due');",
-          '      }',
-          '',
-          '      const payment = manager.create(Payment, {',
-          '        invoiceId: dto.invoiceId,',
-          '        amount: dto.amount,',
-          '        method: dto.method,',
-          '        paidAt: dto.paidAt ?? new Date().toISOString(),',
-          '        reference: dto.reference,',
-          '      });',
-          '      await manager.save(Payment, payment);',
-          '',
-          '      invoice.amountPaid = nextPaid;',
-          "      invoice.status = nextPaid === invoice.amountDue ? 'paid' : 'partially_paid';",
-          '      await manager.save(Invoice, invoice);',
-          '      return { invoice, payment };',
-          '    });',
-          '  }',
-          '}',
-          '',
-        ].join('\n'),
-      },
-      {
-        path: 'src/business-workflows/dto/receive-purchase-order.dto.ts',
-        content: [
-          "import { ApiPropertyOptional } from '@nestjs/swagger';",
-          "import { IsOptional, IsString } from 'class-validator';",
-          '',
-          'export class ReceivePurchaseOrderDto {',
-          '  @ApiPropertyOptional()',
-          '  @IsOptional()',
-          '  @IsString()',
-          '  note?: string;',
-          '}',
-          '',
-        ].join('\n'),
-      },
-      {
-        path: 'src/business-workflows/dto/confirm-sales-order.dto.ts',
-        content: [
-          "import { ApiPropertyOptional } from '@nestjs/swagger';",
-          "import { IsOptional, IsString } from 'class-validator';",
-          '',
-          'export class ConfirmSalesOrderDto {',
-          '  @ApiPropertyOptional()',
-          '  @IsOptional()',
-          '  @IsString()',
-          '  note?: string;',
-          '}',
-          '',
-        ].join('\n'),
-      },
-      {
-        path: 'src/business-workflows/dto/ship-sales-order.dto.ts',
-        content: [
-          "import { ApiPropertyOptional } from '@nestjs/swagger';",
-          "import { IsOptional, IsString } from 'class-validator';",
-          '',
-          'export class ShipSalesOrderDto {',
-          '  @ApiPropertyOptional()',
-          '  @IsOptional()',
-          '  @IsString()',
-          '  note?: string;',
-          '}',
-          '',
-        ].join('\n'),
-      },
-      {
-        path: 'src/business-workflows/dto/record-payment.dto.ts',
-        content: [
-          "import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';",
-          "import { IsNumber, IsOptional, IsString, Min } from 'class-validator';",
-          '',
-          'export class RecordPaymentDto {',
-          '  @ApiProperty()',
-          '  @IsString()',
-          '  invoiceId!: string;',
-          '',
-          '  @ApiProperty()',
-          '  @IsNumber()',
-          '  @Min(0.01)',
-          '  amount!: number;',
-          '',
-          '  @ApiProperty()',
-          '  @IsString()',
-          '  method!: string;',
-          '',
-          '  @ApiPropertyOptional()',
-          '  @IsOptional()',
-          '  @IsString()',
-          '  paidAt?: string;',
-          '',
-          '  @ApiPropertyOptional()',
-          '  @IsOptional()',
-          '  @IsString()',
-          '  reference?: string;',
-          '}',
-          '',
-        ].join('\n'),
-      },
-    ];
-  }
-
-  private findTaskEntity(spec: AppSpec, task: BuildTask) {
-    return spec.entities.find((entity) => entity.name === task.targetEntity);
-  }
-
-  private entityFile(entity: EntitySpec): GeneratedFile {
-    const className = this.toPascalCase(entity.name);
-    const lines = [
-      "import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';",
-      '',
-      '@Entity()',
-      `export class ${className} {`,
-    ];
-
-    for (const field of entity.fields) {
-      const name = this.fieldName(field);
-      if (!name) {
-        continue;
-      }
-
-      if (name === 'id') {
-        lines.push("  @PrimaryGeneratedColumn('uuid')");
-        lines.push('  id!: string;');
-        lines.push('');
-        continue;
-      }
-
-      lines.push(`  @Column(${this.columnOptions(field)})`);
-      lines.push(`  ${name}!: ${this.tsType(field)};`);
-      lines.push('');
-    }
-
-    lines.push('}');
-    lines.push('');
-
-    return {
-      path: `src/${this.toKebabCase(entity.name)}/${this.toKebabCase(entity.name)}.entity.ts`,
-      content: lines.join('\n'),
-    };
-  }
-
-  private appModuleFile(
-    entities: EntitySpec[],
-    featureEntities: EntitySpec[],
-  ): GeneratedFile {
-    const entityImports = entities.map((entity) => {
-      const slug = this.toKebabCase(entity.name);
-      return `import { ${this.toPascalCase(entity.name)} } from './${slug}/${slug}.entity';`;
-    });
-    const moduleImports = featureEntities.map((entity) => {
-      const slug = this.toKebabCase(entity.name);
-      return `import { ${this.toPascalCase(entity.name)}Module } from './${slug}/${slug}.module';`;
-    });
-    const entityNames = entities.map((entity) =>
-      this.toPascalCase(entity.name),
-    );
-    const moduleNames = featureEntities.map(
-      (entity) => `${this.toPascalCase(entity.name)}Module`,
-    );
-
-    return {
-      path: 'src/app.module.ts',
-      content: [
-        "import { Module } from '@nestjs/common';",
-        "import { TypeOrmModule } from '@nestjs/typeorm';",
-        "import { AppController } from './app.controller';",
-        ...entityImports,
-        ...moduleImports,
-        '',
-        '@Module({',
-        '  imports: [',
-        '    TypeOrmModule.forRoot({',
-        "      type: 'sqljs',",
-        '      autoSave: false,',
-        '      synchronize: true,',
-        `      entities: [${entityNames.join(', ')}],`,
-        '    }),',
-        ...moduleNames.map((moduleName) => `    ${moduleName},`),
-        '  ],',
-        '  controllers: [AppController],',
-        '  providers: [],',
-        '})',
-        'export class AppModule {}',
-        '',
-      ].join('\n'),
-    };
-  }
-
-  private crudFeatureFiles(
-    spec: AppSpec,
-    entity: EntitySpec,
-    context?: CodeContext,
-  ): GeneratedFile[] {
-    const slug = this.toKebabCase(entity.name);
-    const className = this.toPascalCase(entity.name);
-    const variableName = this.toCamelCase(entity.name);
-    const createDto = `Create${className}Dto`;
-    const updateDto = `Update${className}Dto`;
-    const endpoints = this.entityEndpoints(entity);
-    const featureEntities = this.featureEntitiesForAppModule(
-      spec,
-      entity,
-      context,
-    );
-
-    return [
-      this.appModuleFile(spec.entities, featureEntities),
-      {
-        path: `src/${slug}/${slug}.module.ts`,
-        content: [
-          "import { Module } from '@nestjs/common';",
-          "import { TypeOrmModule } from '@nestjs/typeorm';",
-          `import { ${className} } from './${slug}.entity';`,
-          `import { ${className}Controller } from './${slug}.controller';`,
-          `import { ${className}Service } from './${slug}.service';`,
-          '',
-          '@Module({',
-          `  imports: [TypeOrmModule.forFeature([${className}])],`,
-          `  controllers: [${className}Controller],`,
-          `  providers: [${className}Service],`,
-          '})',
-          `export class ${className}Module {}`,
-          '',
-        ].join('\n'),
-      },
-      {
-        path: `src/${slug}/${slug}.controller.ts`,
-        content: this.controllerFileContent({
-          className,
-          createDto,
-          endpoints,
-          slug,
-          updateDto,
-          variableName,
-        }),
-      },
-      {
-        path: `src/${slug}/${slug}.service.ts`,
-        content: this.serviceFileContent({
-          className,
-          createDto,
-          endpoints,
-          slug,
-          updateDto,
-        }),
-      },
-      ...this.dtoFilesForEndpoints(entity, endpoints, createDto, updateDto),
-    ];
-  }
-
-  private dtoFilesForEndpoints(
-    entity: EntitySpec,
-    endpoints: EndpointSpec[],
-    createDto: string,
-    updateDto: string,
-  ): GeneratedFile[] {
-    const slug = this.toKebabCase(entity.name);
-    const dtoImports = this.endpointDtoImports(endpoints, createDto, updateDto);
-    return dtoImports.map((dtoName) => ({
-      path: `src/${slug}/dto/${this.toKebabCase(dtoName.replace(/Dto$/, ''))}.dto.ts`,
-      content: this.dtoFileContent(dtoName, entity, dtoName === updateDto),
-    }));
-  }
-
-  private controllerFileContent(params: {
-    className: string;
-    createDto: string;
-    endpoints: EndpointSpec[];
-    slug: string;
-    updateDto: string;
-    variableName: string;
-  }) {
-    const nestImports = new Set(['Controller']);
-    const methodImports = new Set<string>();
-    const lines: string[] = [];
-
-    for (const endpoint of params.endpoints) {
-      methodImports.add(this.httpDecorator(endpoint.method));
-      if (this.routeParamNames(endpoint.path).length > 0) {
-        nestImports.add('Param');
-      }
-      if (this.endpointUsesBody(endpoint)) {
-        nestImports.add('Body');
-      }
-    }
-
-    lines.push(
-      `import { ${[...nestImports, ...methodImports].sort().join(', ')} } from '@nestjs/common';`,
-      "import { ApiTags } from '@nestjs/swagger';",
-    );
-
-    const dtoImports = this.endpointDtoImports(
-      params.endpoints,
-      params.createDto,
-      params.updateDto,
-    );
-    for (const dtoImport of dtoImports) {
-      lines.push(
-        `import { ${dtoImport} } from './dto/${this.toKebabCase(dtoImport.replace(/Dto$/, ''))}.dto';`,
-      );
-    }
-
-    lines.push(
-      `import { ${params.className}Service } from './${params.slug}.service';`,
-      '',
-      `@ApiTags('${params.slug}')`,
-      '@Controller()',
-      `export class ${params.className}Controller {`,
-      `  constructor(private readonly ${params.variableName}Service: ${params.className}Service) {}`,
-    );
-
-    const methodNames = this.endpointMethodNames(params.endpoints);
-    params.endpoints.forEach((endpoint, index) => {
-      const decorator = this.httpDecorator(endpoint.method);
-      const route = this.controllerRoute(endpoint.path);
-      const routeParams = this.routeParamNames(endpoint.path);
-      const dtoName = this.endpointDtoName(
-        endpoint,
-        params.createDto,
-        params.updateDto,
-      );
-      const args = [
-        ...routeParams.map(
-          (name) => `@Param('${name}') ${this.safeIdentifier(name)}: string`,
-        ),
-        ...(dtoName ? [`@Body() dto: ${dtoName}`] : []),
-      ];
-      const serviceArgs = [
-        ...routeParams.map((name) => this.safeIdentifier(name)),
-        ...(dtoName ? ['dto'] : []),
-      ];
-
-      lines.push(
-        '',
-        `  @${decorator}('${this.escapeSingleQuote(route)}')`,
-        `  ${methodNames[index]}(${args.join(', ')}) {`,
-        `    return this.${params.variableName}Service.${methodNames[index]}(${serviceArgs.join(', ')});`,
-        '  }',
-      );
-    });
-
-    lines.push('}', '');
-    return lines.join('\n');
-  }
-
-  private serviceFileContent(params: {
-    className: string;
-    createDto: string;
-    endpoints: EndpointSpec[];
-    slug: string;
-    updateDto: string;
-  }) {
-    const needsNotFoundException = params.endpoints.some((endpoint) =>
-      this.endpointNeedsLookup(endpoint),
-    );
-    const nestImports = needsNotFoundException
-      ? 'Injectable, NotFoundException'
-      : 'Injectable';
-    const dtoImports = this.endpointDtoImports(
-      params.endpoints,
-      params.createDto,
-      params.updateDto,
-    );
-    const lines = [
-      `import { ${nestImports} } from '@nestjs/common';`,
-      "import { InjectRepository } from '@nestjs/typeorm';",
-      "import { Repository } from 'typeorm';",
-      ...dtoImports.map(
-        (dtoImport) =>
-          `import { ${dtoImport} } from './dto/${this.toKebabCase(dtoImport.replace(/Dto$/, ''))}.dto';`,
-      ),
-      `import { ${params.className} } from './${params.slug}.entity';`,
-      '',
-      '@Injectable()',
-      `export class ${params.className}Service {`,
-      '  constructor(',
-      `    @InjectRepository(${params.className})`,
-      `    private readonly repository: Repository<${params.className}>,`,
-      '  ) {}',
-    ];
-
-    const methodNames = this.endpointMethodNames(params.endpoints);
-    params.endpoints.forEach((endpoint, index) => {
-      const routeParams = this.routeParamNames(endpoint.path);
-      const dtoName = this.endpointDtoName(
-        endpoint,
-        params.createDto,
-        params.updateDto,
-      );
-      const args = [
-        ...routeParams.map((name) => `${this.safeIdentifier(name)}: string`),
-        ...(dtoName ? [`dto: ${dtoName}`] : []),
-      ];
-
-      lines.push('', `  async ${methodNames[index]}(${args.join(', ')}) {`);
-      lines.push(
-        ...this.serviceMethodBody(endpoint, routeParams, params.className),
-      );
-      lines.push('  }');
-    });
-
-    lines.push('}', '');
-    return lines.join('\n');
-  }
-
-  private serviceMethodBody(
-    endpoint: EndpointSpec,
-    routeParams: string[],
-    className: string,
-  ) {
-    const method = endpoint.method.toUpperCase();
-    const idParam = routeParams.find(
-      (name) => this.normalizeName(name) === 'id',
-    );
-    const whereObject = this.whereObjectLiteral(routeParams);
-
-    if (method === 'GET' && routeParams.length === 0) {
-      return ['    return this.repository.find();'];
-    }
-
-    if (method === 'GET') {
-      return [
-        `    const entity = await this.repository.findOne({ where: ${whereObject} as any });`,
-        '    if (!entity) {',
-        `      throw new NotFoundException('${className} not found');`,
-        '    }',
-        '    return entity;',
-      ];
-    }
-
-    if (method === 'DELETE') {
-      return [
-        `    const entity = await this.repository.findOne({ where: ${whereObject} as any });`,
-        '    if (!entity) {',
-        `      throw new NotFoundException('${className} not found');`,
-        '    }',
-        '    await this.repository.remove(entity);',
-        `    return { deleted: true${idParam ? `, id: ${this.safeIdentifier(idParam)}` : ''} };`,
-      ];
-    }
-
-    if (method === 'PUT' || method === 'PATCH') {
-      return [
-        `    const entity = await this.repository.findOne({ where: ${whereObject} as any });`,
-        '    if (!entity) {',
-        `      throw new NotFoundException('${className} not found');`,
-        '    }',
-        '    Object.assign(entity, dto);',
-        '    return this.repository.save(entity);',
-      ];
-    }
-
-    return [
-      '    const entity = this.repository.create({',
-      '      ...dto,',
-      ...routeParams.map((name) => `      ${this.safeIdentifier(name)},`),
-      '    } as any);',
-      '    return this.repository.save(entity);',
-    ];
-  }
-
-  private entityEndpoints(entity: EntitySpec): EndpointSpec[] {
-    return entity.endpoints.flatMap((endpoint): EndpointSpec[] => {
-      const method =
-        typeof endpoint.method === 'string'
-          ? endpoint.method.toUpperCase()
-          : '';
-      const path =
-        typeof endpoint.path === 'string' ? endpoint.path.trim() : '';
-      if (!/^(GET|POST|PUT|PATCH|DELETE)$/.test(method) || !path) {
-        return [];
-      }
-      return [
-        {
-          method,
-          path,
-          operationName:
-            typeof endpoint.operationName === 'string'
-              ? endpoint.operationName
-              : undefined,
-          description:
-            typeof endpoint.description === 'string'
-              ? endpoint.description
-              : undefined,
-          requestFields: Array.isArray(endpoint.requestFields)
-            ? (endpoint.requestFields as Array<Record<string, unknown>>)
-            : [],
-          responseFields: Array.isArray(endpoint.responseFields)
-            ? (endpoint.responseFields as Array<Record<string, unknown>>)
-            : [],
-        },
-      ];
-    });
-  }
-
-  private featureEntitiesForAppModule(
-    spec: AppSpec,
-    currentEntity: EntitySpec,
-    context?: CodeContext,
-  ) {
-    const existingFeatureModules = new Set(
-      context?.relevantFiles
-        .filter((file) => /^src\/[^/]+\/[^/]+\.module\.ts$/.test(file))
-        .map((file) => file.split('/')[1]) ?? [],
-    );
-    existingFeatureModules.add(this.toKebabCase(currentEntity.name));
-    return spec.entities.filter(
-      (entity) =>
-        entity.endpoints.length > 0 &&
-        existingFeatureModules.has(this.toKebabCase(entity.name)),
-    );
-  }
-
-  private endpointDtoName(
-    endpoint: EndpointSpec,
-    createDto: string,
-    updateDto: string,
-  ) {
-    if (!this.endpointUsesBody(endpoint)) {
-      return undefined;
-    }
-    return endpoint.method.toUpperCase() === 'POST' ? createDto : updateDto;
-  }
-
-  private endpointDtoImports(
-    endpoints: EndpointSpec[],
-    createDto: string,
-    updateDto: string,
-  ) {
-    return Array.from(
-      new Set(
-        endpoints
-          .map((endpoint) =>
-            this.endpointDtoName(endpoint, createDto, updateDto),
-          )
-          .filter((dtoName): dtoName is string => Boolean(dtoName)),
-      ),
-    );
-  }
-
-  private endpointNeedsLookup(endpoint: EndpointSpec) {
-    const method = endpoint.method.toUpperCase();
-    return (
-      ['GET', 'PUT', 'PATCH', 'DELETE'].includes(method) &&
-      this.routeParamNames(endpoint.path).length > 0
-    );
-  }
-
-  private endpointMethodNames(endpoints: EndpointSpec[]) {
-    const used = new Map<string, number>();
-    return endpoints.map((endpoint) => {
-      const baseName = this.endpointMethodName(endpoint);
-      const count = used.get(baseName) ?? 0;
-      used.set(baseName, count + 1);
-      return count === 0 ? baseName : `${baseName}${count + 1}`;
-    });
-  }
-
-  private endpointMethodName(endpoint: EndpointSpec) {
-    const source =
-      endpoint.operationName?.trim() ||
-      endpoint.description?.trim() ||
-      `${endpoint.method.toLowerCase()} ${endpoint.path}`;
-    const words = source.match(/[A-Za-z0-9]+/g) ?? [];
-    const normalizedWords =
-      words.length > 0
-        ? words
-        : [
-            endpoint.method.toLowerCase(),
-            ...endpoint.path.split('/').filter(Boolean),
-          ];
-    const [first, ...rest] = normalizedWords;
-    const methodName = [
-      first.toLowerCase(),
-      ...rest.map((word) => this.capitalizeIdentifierPart(word)),
-    ].join('');
-
-    if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(methodName)) {
-      return methodName;
-    }
-
-    return `handle${this.capitalizeIdentifierPart(this.httpDecorator(endpoint.method))}`;
-  }
-
-  private capitalizeIdentifierPart(value: string) {
-    const cleaned = value.replace(/[^A-Za-z0-9_$]/g, '');
-    if (!cleaned) {
-      return '';
-    }
-    return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
-  }
-
-  private endpointUsesBody(endpoint: EndpointSpec) {
-    return ['POST', 'PUT', 'PATCH'].includes(endpoint.method.toUpperCase());
-  }
-
-  private httpDecorator(method: string) {
-    const normalized = method.toUpperCase();
-    return normalized.charAt(0) + normalized.slice(1).toLowerCase();
-  }
-
-  private controllerRoute(path: string) {
-    return path.trim().replace(/^\/+/, '');
-  }
-
-  private routeParamNames(path: string) {
-    return Array.from(
-      path.matchAll(/:([A-Za-z_][A-Za-z0-9_]*)/g),
-      (match) => match[1],
-    );
-  }
-
-  private whereObjectLiteral(routeParams: string[]) {
-    if (routeParams.length === 0) {
-      return '{}';
-    }
-    return `{ ${routeParams.map((name) => `${name}: ${this.safeIdentifier(name)}`).join(', ')} }`;
-  }
-
-  private safeIdentifier(value: string) {
-    const identifier = value.replace(/[^A-Za-z0-9_$]/g, '_');
-    return /^[A-Za-z_$]/.test(identifier) ? identifier : `param_${identifier}`;
-  }
-
-  private dtoFileContent(
-    className: string,
-    entity: EntitySpec,
-    optional: boolean,
-  ) {
-    const fields = entity.fields.filter(
-      (field) => this.fieldName(field) !== 'id',
-    );
-    const decoratorImports = new Set<string>();
-    const lines = [
-      "import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';",
-    ];
-
-    for (const field of fields) {
-      for (const decorator of this.validatorDecorators(field, optional)) {
-        decoratorImports.add(decorator.replace(/\(.+$/, ''));
-      }
-    }
-
-    if (decoratorImports.size > 0) {
-      lines.push(
-        `import { ${Array.from(decoratorImports).sort().join(', ')} } from 'class-validator';`,
-      );
-    }
-
-    lines.push('');
-    lines.push(`export class ${className} {`);
-
-    for (const field of fields) {
-      const name = this.fieldName(field);
-      if (!name) {
-        continue;
-      }
-
-      lines.push(optional ? '  @ApiPropertyOptional()' : '  @ApiProperty()');
-      for (const decorator of this.validatorDecorators(field, optional)) {
-        lines.push(`  @${decorator}`);
-      }
-      lines.push(`  ${name}${optional ? '?' : '!'}: ${this.tsType(field)};`);
-      lines.push('');
-    }
-
-    lines.push('}');
-    lines.push('');
-    return lines.join('\n');
   }
 
   entityDesignPrompt(params: {
@@ -1291,34 +624,6 @@ export class NestJsTargetAdapter implements TargetAdapter {
     ];
   }
 
-  entityGenerationPrompt(params: {
-    spec: AppSpec;
-    entity: EntitySpec;
-    context: CodeContext;
-  }): string {
-    return [
-      'Implement exactly one NestJS entity feature from the normalized backend spec.',
-      'Return JSON shape: {"files":[{"path":"relative/path","content":"complete file content"}]}.',
-      'Return complete replacement content for changed files, not snippets.',
-      'Use the existing TypeORM entity files from the entity design step.',
-      'Do not recreate or remove TypeORM entity relation decorators unless fixing a build error.',
-      'Prefer a standard NestJS feature module with module, controller, service, DTOs, and TypeOrmModule.forFeature.',
-      'Register the feature module in src/app.module.ts.',
-      'Keep code buildable with npm run build.',
-      'Do not downgrade package.json dependencies or TypeScript settings.',
-      'Do not remove existing working features.',
-      '',
-      'Entity to implement:',
-      JSON.stringify(params.entity, null, 2),
-      '',
-      'Full application spec:',
-      JSON.stringify(params.spec, null, 2),
-      '',
-      'Code context:',
-      JSON.stringify(params.context, null, 2),
-    ].join('\n');
-  }
-
   private entityFieldsTask(entity: EntitySpec): BuildTask {
     const slug = this.toKebabCase(entity.name);
     return {
@@ -1341,18 +646,27 @@ export class NestJsTargetAdapter implements TargetAdapter {
   }
 
   private entityRelationsTask(
-    entities: EntitySpec[],
+    relations: RelationSkeleton[],
     entityFieldTaskIds: string[],
+    id: string,
+    batchNumber: number,
+    batchCount: number,
   ): BuildTask {
+    const entityNames = new Set(relations.flatMap((relation) => [relation.source, relation.target]));
     return {
-      id: 'entity-relations',
+      id,
       kind: 'entity-relations',
-      title: 'Add TypeORM entity relations',
-      description:
-        'Add TypeORM relation decorators across all generated entity files after scalar entity files exist.',
-      dependsOn: entityFieldTaskIds,
-      allowedFiles: entities.map((entity) => {
-        const slug = this.toKebabCase(entity.name);
+      title: `Map relation skeleton ${batchNumber}/${batchCount}`,
+      description: [
+        `Apply only relation skeleton batch ${batchNumber}/${batchCount}.`,
+        'Do not infer additional relationships.',
+        JSON.stringify(relations, null, 2),
+      ].join('\n'),
+      dependsOn: entityFieldTaskIds.filter((taskId) =>
+        [...entityNames].some((name) => taskId === `entity-${this.toKebabCase(name)}-fields`),
+      ),
+      allowedFiles: [...entityNames].map((name) => {
+        const slug = this.toKebabCase(name);
         return `src/${slug}/${slug}.entity.ts`;
       }),
       doneCriteria: [
@@ -1363,22 +677,28 @@ export class NestJsTargetAdapter implements TargetAdapter {
     };
   }
 
-  private ormRegistrationTask(entities: EntitySpec[]): BuildTask {
-    const hasRelations = entities.some((entity) => entity.relations.length > 0);
+  private ormRegistrationTask(
+    spec: AppSpec,
+    relationTaskIds: string[],
+  ): BuildTask {
+    const entities = spec.entities;
+    const productionDatabase = this.productionDatabaseType(spec);
+    const entityFieldTaskIds = entities.map(
+      (entity) => `entity-${this.toKebabCase(entity.name)}-fields`,
+    );
     return {
       id: 'orm-registration',
       kind: 'orm-registration',
       title: 'Register TypeORM infrastructure',
       description:
-        'Configure TypeOrmModule.forRoot for local SQL.js execution and register all generated entities.',
-      dependsOn: hasRelations
-        ? ['entity-relations']
-        : entities.map(
-            (entity) => `entity-${this.toKebabCase(entity.name)}-fields`,
-          ),
+        `Reduce all relation map outputs, configure ${productionDatabase} through DATABASE_URL with a SQL.js local smoke fallback, and register all generated entities.`,
+      // Relation map tasks depend only on the entity files touched by that
+      // shard. ORM registration, however, registers the whole application and
+      // must wait for every scalar entity task as well as every relation map.
+      dependsOn: [...entityFieldTaskIds, ...relationTaskIds],
       allowedFiles: ['src/app.module.ts', 'package.json', 'tsconfig.json'],
       doneCriteria: [
-        'TypeOrmModule.forRoot is configured with type sqljs and synchronize true',
+        `${productionDatabase} DATABASE_URL is the production database and SQL.js is the local smoke fallback`,
         'All generated entity classes are registered',
         'Required TypeORM dependencies are present in package.json',
         'Configured build command passes',
@@ -1395,13 +715,14 @@ export class NestJsTargetAdapter implements TargetAdapter {
       id: `feature-${slug}-crud`,
       kind: 'crud-feature',
       title: `Implement ${entity.name} CRUD feature`,
-      description: `Implement the ${entity.name} NestJS module, controller, service, DTOs, and repository usage.`,
+      description: [
+        `Implement the ${entity.name} NestJS module, controller, service, DTOs, and repository usage.`,
+        'Authoritative endpoint skeleton (expand exactly these routes; no extras):',
+        JSON.stringify(this.conventionalEndpointSkeleton(entity), null, 2),
+      ].join('\n'),
       targetEntity: entity.name,
       dependsOn: [
         'orm-registration',
-        ...(entities.some((candidate) => candidate.relations.length > 0)
-          ? ['entity-relations']
-          : []),
       ],
       allowedFiles: [
         `src/${slug}/${slug}.module.ts`,
@@ -1421,9 +742,58 @@ export class NestJsTargetAdapter implements TargetAdapter {
     };
   }
 
+  private endpointWorkflowTask(
+    entity: EntitySpec,
+    _entities: EntitySpec[],
+    endpoints: EndpointSpec[],
+  ): BuildTask {
+    const slug = this.toKebabCase(entity.name);
+    const endpointLines = endpoints.map((endpoint) => {
+      const requirements = this.endpointImplementationRequirements(endpoint);
+      return [
+        `${endpoint.method} ${endpoint.path}`,
+        endpoint.operationName ? `operation=${endpoint.operationName}` : '',
+        endpoint.description ? `description=${endpoint.description}` : '',
+        requirements ? `implementationRequirements=${requirements}` : '',
+      ]
+        .filter(Boolean)
+        .join(' | ');
+    });
+
+    return {
+      id: `endpoint-${slug}-workflows`,
+      kind: 'endpoint-workflow',
+      title: `Implement ${entity.name} non-CRUD endpoints`,
+      description: [
+        `Complete the ${entity.name} endpoints that require domain behavior beyond generic CRUD.`,
+        'Authoritative endpoint skeleton (the final controller must expose exactly this set):',
+        JSON.stringify(this.endpointSkeleton(entity), null, 2),
+        'Non-CRUD operations requiring domain implementation:',
+        ...endpointLines.map((line) => `- ${line}`),
+      ].join('\n'),
+      targetEntity: entity.name,
+      dependsOn: [`feature-${slug}-crud`],
+      allowedFiles: [
+        `src/${slug}/${slug}.module.ts`,
+        `src/${slug}/${slug}.controller.ts`,
+        `src/${slug}/${slug}.service.ts`,
+        `src/${slug}/dto/create-${slug}.dto.ts`,
+        `src/${slug}/dto/update-${slug}.dto.ts`,
+        'src/app.module.ts',
+      ],
+      doneCriteria: [
+        'Every non-CRUD endpoint from the normalized spec is exposed with the exact method and route path',
+        'Each endpoint has executable service logic that satisfies its implementationRequirements and description',
+        'No TODO, placeholder, stub, pseudo-code, or empty method body remains in changed endpoint workflow code',
+        'Existing CRUD endpoints and service methods continue to compile and behave as before',
+        'Configured build command passes',
+      ],
+    };
+  }
+
   private businessWorkflowTask(
     entities: EntitySpec[],
-    hasRelations: boolean,
+    relationTaskIds: string[],
   ): BuildTask {
     const featureTaskIds = entities.map(
       (entity) => `feature-${this.toKebabCase(entity.name)}-crud`,
@@ -1437,7 +807,7 @@ export class NestJsTargetAdapter implements TargetAdapter {
         'Implement business endpoints that update multiple entities atomically, especially stock reservation, stock deduction, stock movement audit rows, invoice creation, and payment-to-invoice consistency.',
       dependsOn: [
         'orm-registration',
-        ...(hasRelations ? ['entity-relations'] : []),
+        ...relationTaskIds,
         ...featureTaskIds,
       ],
       allowedFiles: [
@@ -1459,6 +829,318 @@ export class NestJsTargetAdapter implements TargetAdapter {
         'Configured build command passes',
       ],
     };
+  }
+
+  private nonCrudEndpoints(entity: EntitySpec): EndpointSpec[] {
+    return entity.endpoints
+      .filter((endpoint): endpoint is EndpointSpec => {
+        return (
+          typeof endpoint.method === 'string' &&
+          typeof endpoint.path === 'string'
+        );
+      })
+      .filter((endpoint) => !this.isConventionalCrudEndpoint(entity, endpoint));
+  }
+
+  private isConventionalCrudEndpoint(
+    entity: EntitySpec,
+    endpoint: EndpointSpec,
+  ): boolean {
+    const method = endpoint.method.toUpperCase();
+    const normalizedPath = this.normalizeEndpointPath(endpoint.path);
+    const collectionPaths = this.collectionPathCandidates(entity);
+    const idPathPattern = /\{?:(?:id|uuid)\}?|\{(?:id|uuid)\}/i;
+
+    for (const collectionPath of collectionPaths) {
+      if (normalizedPath === collectionPath) {
+        return method === 'GET' || method === 'POST';
+      }
+
+      const suffix = normalizedPath.slice(collectionPath.length);
+      if (
+        suffix.startsWith('/') &&
+        idPathPattern.test(suffix.slice(1)) &&
+        !suffix.slice(1).includes('/')
+      ) {
+        return ['GET', 'PATCH', 'PUT', 'DELETE'].includes(method);
+      }
+    }
+
+    return false;
+  }
+
+  private collectionPathCandidates(entity: EntitySpec): string[] {
+    const slug = this.toKebabCase(entity.name);
+    const plural = this.toKebabCase(this.pluralizeLabel(entity.name));
+    return [
+      ...new Set([`/${slug}`, `/api/${slug}`, `/${plural}`, `/api/${plural}`]),
+    ];
+  }
+
+  private normalizeEndpointPath(path: string): string {
+    const normalized = path
+      .trim()
+      .replace(/\{([^}]+)\}/g, ':$1')
+      .replace(/\/{2,}/g, '/')
+      .replace(/\/+$/, '')
+      .replace(/^([^/])/, '/$1');
+    return normalized || '/';
+  }
+
+  private productionDatabaseType(spec: AppSpec): 'postgres' | 'mysql' {
+    const declared = JSON.stringify(spec.database ?? {}).toLowerCase();
+    return /mysql|mariadb/.test(declared) ? 'mysql' : 'postgres';
+  }
+
+  private normalizePortableColumnTypes(content: string) {
+    return content
+      .replace(/\btype:\s*['"](?:timestamp|datetime)['"]\s*,?\s*/g, '')
+      .replace(/,\s*}/g, ' }')
+      .replace(/@Column\(\{\s*}\)/g, '@Column()');
+  }
+
+  private endpointSkeleton(entity: EntitySpec): EndpointSpec[] {
+    return entity.endpoints.filter(
+      (endpoint): endpoint is EndpointSpec =>
+        typeof endpoint.method === 'string' &&
+        typeof endpoint.path === 'string',
+    );
+  }
+
+  private conventionalEndpointSkeleton(entity: EntitySpec): EndpointSpec[] {
+    return this.endpointSkeleton(entity).filter((endpoint) =>
+      this.isConventionalCrudEndpoint(entity, endpoint),
+    );
+  }
+
+  private controllerRoutes(controller: string, base?: string): Set<string> {
+    const controllerBase =
+      base ??
+      controller.match(/@Controller\(\s*['"]([^'"]*)['"]\s*\)/)?.[1] ??
+      '';
+    return new Set(
+      Array.from(
+        controller.matchAll(
+          /@(Get|Post|Put|Patch|Delete|Head|Options|All)(?:\(\s*(?:['"]([^'"]*)['"])?\s*\))?/g,
+        ),
+        (match) =>
+          `${match[1].toUpperCase()} ${this.normalizeEndpointPath(
+            `/${controllerBase}/${match[2] ?? ''}`,
+          )}`,
+      ),
+    );
+  }
+
+  private validateEndpointSkeleton(
+    entity: EntitySpec,
+    controller: string,
+  ): string[] {
+    const actual = this.controllerRoutes(controller);
+    const expected = new Set(
+      this.endpointSkeleton(entity).map(
+        (endpoint) =>
+          `${endpoint.method.toUpperCase()} ${this.normalizeEndpointPath(endpoint.path)}`,
+      ),
+    );
+    return [
+      ...[...expected]
+        .filter((route) => !actual.has(route))
+        .map((route) => `${entity.name} controller is missing ${route}`),
+      ...[...actual]
+        .filter((route) => !expected.has(route))
+        .map(
+          (route) =>
+            `${entity.name} controller exposes API absent from specification: ${route}`,
+        ),
+    ];
+  }
+
+  private validateDtoSkeleton(
+    entity: EntitySpec,
+    files: GeneratedFile[],
+  ): string[] {
+    const slug = this.toKebabCase(entity.name);
+    const dtoFiles = files.filter((file) =>
+      file.path.startsWith(`src/${slug}/dto/`),
+    );
+    const dtoSource = dtoFiles.map((file) => file.content).join('\n');
+    const requestFields = this.endpointSkeleton(entity).flatMap((endpoint) =>
+      (Array.isArray(endpoint.requestFields) ? endpoint.requestFields : []).filter(
+        (field) => {
+          const name = typeof field.name === 'string' ? field.name : '';
+          return (
+            Boolean(name) &&
+            !new RegExp(`(?:\\{|:)${this.escapeRegExp(name)}(?:\\}|/|$)`).test(
+              endpoint.path,
+            )
+          );
+        },
+      ),
+    );
+    const problems: string[] = [];
+    for (const field of requestFields) {
+      const name = typeof field.name === 'string' ? field.name : '';
+      if (!name) continue;
+      const property = dtoSource.match(
+        new RegExp(`\\b${this.escapeRegExp(name)}([!?]?):\\s*`, 'm'),
+      );
+      if (!property) {
+        problems.push(`src/${slug}/dto: request field ${name} is absent from generated DTOs`);
+      } else if (field.required === true && property[1] === '?') {
+        problems.push(`src/${slug}/dto: required request field ${name} is optional`);
+      }
+    }
+    return problems;
+  }
+
+  private escapeRegExp(value: string) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  private relationSkeleton(entities: EntitySpec[]): RelationSkeleton[] {
+    const names = entities.map((entity) => entity.name);
+    const ranked = new Map<string, RelationSkeleton>();
+    for (const entity of entities) {
+      for (const declaration of entity.relations) {
+        const serialized = JSON.stringify(declaration).toLowerCase();
+        const explicit = ['target', 'to', 'entity', 'relatedEntity']
+          .map((key) => declaration[key])
+          .find((value): value is string => typeof value === 'string');
+        const target =
+          names.find(
+            (name) =>
+              this.normalizeName(name) === this.normalizeName(explicit ?? ''),
+          ) ??
+          names.find(
+            (name) =>
+              name !== entity.name &&
+              serialized.includes(this.normalizeName(name)),
+          );
+        if (!target) continue;
+        const pairKey = [entity.name, target]
+          .map((name) => this.normalizeName(name))
+          .sort()
+          .join('::');
+        const identity = this.relationIdentity(declaration);
+        const key = identity ? `${pairKey}::${identity}` : pairKey;
+        const candidate = { source: entity.name, target, declaration };
+        const existing = ranked.get(key);
+        if (!existing || this.relationRank(declaration) > this.relationRank(existing.declaration)) {
+          ranked.set(key, candidate);
+        }
+      }
+    }
+    return [...ranked.values()].sort((left, right) =>
+      `${left.source}:${left.target}`.localeCompare(`${right.source}:${right.target}`),
+    );
+  }
+
+  private relationRank(relation: Record<string, unknown>): number {
+    const value = JSON.stringify(relation).toLowerCase();
+    if (/1\s*[:\-]\s*n|one.?to.?many|many.?to.?one/.test(value)) return 3;
+    if (/n\s*[:\-]\s*n|many.?to.?many/.test(value)) return 2;
+    return 1;
+  }
+
+  private relationIdentity(relation: Record<string, unknown>): string {
+    const explicitId = [
+      relation.relationId,
+      relation.id,
+      relation.name,
+      relation.relationName,
+    ].find((value): value is string => typeof value === 'string' && value.length > 0);
+    if (explicitId) return this.normalizeName(explicitId);
+
+    const properties = [
+      relation.property,
+      relation.sourceProperty,
+      relation.targetProperty,
+      relation.inverseProperty,
+      relation.foreignKey,
+    ]
+      .filter((value): value is string => typeof value === 'string' && value.length > 0)
+      .map((value) => this.normalizeName(value))
+      .sort();
+    return properties.join('::');
+  }
+
+  private chunk<T>(items: T[], size: number): T[][] {
+    const chunks: T[][] = [];
+    for (let index = 0; index < items.length; index += size) {
+      chunks.push(items.slice(index, index + size));
+    }
+    return chunks;
+  }
+
+  private taskSpecView(spec: AppSpec, task: BuildTask) {
+    const allowedEntitySlugs = new Set(
+      task.allowedFiles
+        .filter((file) => file.endsWith('.entity.ts'))
+        .map((file) => file.split('/')[1]),
+    );
+    const entities = spec.entities.filter(
+      (entity) =>
+        entity.name === task.targetEntity ||
+        allowedEntitySlugs.has(this.toKebabCase(entity.name)),
+    );
+    return {
+      projectName: spec.projectName,
+      summary: spec.summary,
+      entities:
+        task.kind === 'orm-registration'
+          ? spec.entities.map((entity) => ({ name: entity.name }))
+          : entities.length > 0
+            ? entities
+            : spec.entities,
+      endpoints: task.targetEntity
+        ? spec.endpoints.filter((endpoint) =>
+            entities.some((entity) => entity.endpoints.includes(endpoint)),
+          )
+        : [],
+      auth: spec.auth,
+      database: spec.database,
+      businessRules:
+        task.kind === 'business-workflow' ? spec.businessRules : [],
+      assumptions: spec.assumptions,
+    };
+  }
+
+  private endpointImplementationRequirements(endpoint: EndpointSpec): string {
+    const value = (endpoint as Record<string, unknown>)
+      .implementationRequirements;
+    if (typeof value === 'string') {
+      return value.trim();
+    }
+    if (Array.isArray(value)) {
+      return value
+        .filter((item) => typeof item === 'string')
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .join('; ');
+    }
+    return '';
+  }
+
+  private relatedEntityFiles(
+    entity: EntitySpec,
+    entities: EntitySpec[],
+  ): string[] {
+    const files = new Set<string>();
+
+    for (const candidate of entities) {
+      if (candidate.name === entity.name) {
+        continue;
+      }
+
+      const slug = this.toKebabCase(candidate.name);
+      files.add(`src/${slug}/${slug}.module.ts`);
+      files.add(`src/${slug}/${slug}.service.ts`);
+      files.add(`src/${slug}/${slug}.entity.ts`);
+      files.add(`src/${slug}/dto/create-${slug}.dto.ts`);
+      files.add(`src/${slug}/dto/update-${slug}.dto.ts`);
+    }
+
+    return [...files];
   }
 
   private hasBusinessWorkflowRequirements(spec: AppSpec) {
@@ -1515,6 +1197,13 @@ export class NestJsTargetAdapter implements TargetAdapter {
         return {
           ...file,
           content: this.normalizeTsConfig(file.content),
+        };
+      }
+
+      if (file.path.endsWith('.entity.ts')) {
+        return {
+          ...file,
+          content: this.normalizePortableColumnTypes(file.content),
         };
       }
 
@@ -1578,7 +1267,27 @@ export class NestJsTargetAdapter implements TargetAdapter {
     for (const entity of entities) {
       for (const relation of this.parseOwningRelations(entity.content)) {
         const target = byClassName.get(relation.targetClass);
-        if (!target || target.properties.has(relation.inverseProperty)) {
+        if (!target) {
+          continue;
+        }
+
+        if (target.properties.has(relation.inverseProperty)) {
+          // A collection inverse cannot be paired with @OneToOne. Normalize the
+          // owning side to @ManyToOne so both decorators express the same
+          // cardinality and runtime metadata agrees with the property types.
+          if (
+            relation.decorator === 'OneToOne' &&
+            target.arrayProperties.has(relation.inverseProperty)
+          ) {
+            entity.content = this.ensureTypeOrmDecoratorImport(
+              entity.content.replace(
+                relation.raw,
+                relation.raw.replace('@OneToOne', '@ManyToOne'),
+              ),
+              'ManyToOne',
+            );
+            changed.set(entity.filePath, entity.content);
+          }
           continue;
         }
 
@@ -1617,6 +1326,57 @@ export class NestJsTargetAdapter implements TargetAdapter {
           target.propertyTypes.set(entity.className, relation.inverseProperty);
           changed.set(target.filePath, target.content);
         }
+      }
+    }
+
+    // Symmetric pass: a @OneToMany inverse lambda (x => x.user) is dangling
+    // unless the target entity declares the owning @ManyToOne side. The LLM
+    // often emits the collection side but forgets the owning side, producing
+    // "Property 'user' does not exist on type 'HealthMetric'".
+    for (const entity of entities) {
+      for (const relation of this.parseInverseRelations(entity.content)) {
+        const target = byClassName.get(relation.targetClass);
+        if (!target || target.properties.has(relation.inverseProperty)) {
+          continue;
+        }
+
+        // Target already owns a relation back to this entity under a different
+        // property name → repoint the @OneToMany lambda at the existing one.
+        const existingOwning = target.propertyTypes.get(entity.className);
+        if (existingOwning) {
+          entity.content = entity.content.replace(
+            relation.raw,
+            relation.raw.replace(
+              `.${relation.inverseProperty}`,
+              `.${existingOwning}`,
+            ),
+          );
+          changed.set(entity.filePath, entity.content);
+          continue;
+        }
+
+        // Otherwise synthesize the missing owning @ManyToOne side.
+        const ownerVariable = this.toCamelCase(entity.className);
+        target.content = this.ensureTypeOrmDecoratorImport(
+          target.content,
+          'ManyToOne',
+        );
+        target.content = this.ensureEntityImport(
+          target.content,
+          entity.className,
+          target.filePath,
+          entity.filePath,
+        );
+        target.content = this.insertClassProperty(
+          target.content,
+          [
+            `  @ManyToOne(() => ${entity.className}, ${ownerVariable} => ${ownerVariable}.${relation.ownerProperty})`,
+            `  ${relation.inverseProperty}!: ${entity.className};`,
+          ].join('\n'),
+        );
+        target.properties.add(relation.inverseProperty);
+        target.propertyTypes.set(entity.className, relation.inverseProperty);
+        changed.set(target.filePath, target.content);
       }
     }
 
@@ -1661,10 +1421,36 @@ export class NestJsTargetAdapter implements TargetAdapter {
   e2eCheckCommands(): CommandSpec[] {
     return [
       {
-        command: 'npm',
-        args: ['run', 'build'],
-        description:
-          'Fallback E2E gate until generated smoke tests are available',
+        command: 'node',
+        args: [
+          '-e',
+          [
+            "const { NestFactory } = require('@nestjs/core');",
+            "const { ValidationPipe } = require('@nestjs/common');",
+            "const { DocumentBuilder, SwaggerModule } = require('@nestjs/swagger');",
+            "const { DataSource } = require('typeorm');",
+            "const fs = require('node:fs');",
+            "const { AppModule } = require('./dist/app.module');",
+            '(async () => {',
+            '  const app = await NestFactory.create(AppModule, { logger: false });',
+            '  app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));',
+            "  const config = new DocumentBuilder().setTitle('smoke').setVersion('1').build();",
+            '  SwaggerModule.createDocument(app, config);',
+            '  const localDataSource = app.get(DataSource);',
+            "  const appModuleSource = fs.readFileSync('./src/app.module.ts', 'utf8');",
+            "  const productionType = appModuleSource.match(/type:\\s*['\"](postgres|mysql)['\"]/)?.[1];",
+            "  if (!productionType) throw new Error('Production database type was not found');",
+            '  const metadataSource = new DataSource({ type: productionType, entities: localDataSource.entityMetadatas.map((metadata) => metadata.target) });',
+            '  await metadataSource.buildMetadatas();',
+            "  await app.listen(0, '127.0.0.1');",
+            '  const address = app.getHttpServer().address();',
+            "  const response = await fetch(`http://127.0.0.1:${address.port}/health`);",
+            "  if (!response.ok) throw new Error(`GET /health failed: ${response.status}`);",
+            '  await app.close();',
+            '})().catch((error) => { console.error(error); process.exit(1); });',
+          ].join('\n'),
+        ],
+        description: 'Start the HTTP app, build Swagger, call health, and close',
       },
     ];
   }
@@ -1693,77 +1479,14 @@ export class NestJsTargetAdapter implements TargetAdapter {
     return value.toLowerCase().replace(/[^a-z0-9]/g, '');
   }
 
-  private fieldName(field: Record<string, unknown>) {
-    return typeof field.name === 'string' ? field.name.trim() : '';
-  }
-
-  private fieldType(field: Record<string, unknown>) {
-    return typeof field.type === 'string'
-      ? field.type.trim().toLowerCase()
-      : 'string';
-  }
-
-  private tsType(field: Record<string, unknown>) {
-    const type = this.fieldType(field);
-    if (
-      ['int', 'integer', 'number', 'float', 'decimal', 'double'].includes(type)
-    ) {
-      return 'number';
+  private pluralizeLabel(value: string) {
+    if (/metric$/i.test(value)) {
+      return `${value}s`;
     }
-    if (['bool', 'boolean'].includes(type)) {
-      return 'boolean';
+    if (value.endsWith('y')) {
+      return `${value.slice(0, -1)}ies`;
     }
-    return 'string';
-  }
-
-  private columnOptions(field: Record<string, unknown>) {
-    const type = this.fieldType(field);
-    const nullable = field.required === false ? ', nullable: true' : '';
-
-    if (type === 'uuid') {
-      return `{ type: 'varchar'${nullable} }`;
-    }
-    if (['int', 'integer'].includes(type)) {
-      return `{ type: 'integer'${nullable} }`;
-    }
-    if (['number', 'float', 'decimal', 'double'].includes(type)) {
-      return `{ type: 'float'${nullable} }`;
-    }
-    if (['bool', 'boolean'].includes(type)) {
-      return `{ type: 'boolean'${nullable} }`;
-    }
-    if (type === 'enum') {
-      return `{ type: 'varchar'${nullable} }`;
-    }
-    return `{ type: 'varchar'${nullable} }`;
-  }
-
-  private validatorDecorators(
-    field: Record<string, unknown>,
-    optional: boolean,
-  ) {
-    const decorators: string[] = [];
-    const type = this.fieldType(field);
-
-    if (optional) {
-      decorators.push('IsOptional()');
-    } else {
-      decorators.push('IsNotEmpty()');
-    }
-
-    if (type === 'uuid') {
-      decorators.push('IsUUID()');
-    } else if (['int', 'integer'].includes(type)) {
-      decorators.push('IsInt()');
-    } else if (['number', 'float', 'decimal', 'double'].includes(type)) {
-      decorators.push('IsNumber()');
-    } else if (['bool', 'boolean'].includes(type)) {
-      decorators.push('IsBoolean()');
-    } else {
-      decorators.push('IsString()');
-    }
-
-    return decorators;
+    return `${value}s`;
   }
 
   private escapeSingleQuote(value: string) {
@@ -1774,18 +1497,16 @@ export class NestJsTargetAdapter implements TargetAdapter {
     existingContent: string,
     nextContent: string,
   ): string {
-    const importDeclarations = Array.from(
-      new Set([
+    const importDeclarations = this.mergeImportDeclarations([
         ...this.extractImportDeclarations(existingContent),
         ...this.extractImportDeclarations(nextContent),
-      ]),
-    ).sort((left, right) => {
+      ]).sort((left, right) => {
       if (left.includes("'@nestjs/common'")) return -1;
       if (right.includes("'@nestjs/common'")) return 1;
       return left.localeCompare(right);
     });
 
-    const moduleImports = this.dedupeModuleImports(
+    let moduleImports = this.dedupeModuleImports(
       Array.from(
         new Set([
           ...this.extractModuleArray(existingContent, 'imports'),
@@ -1793,6 +1514,33 @@ export class NestJsTargetAdapter implements TargetAdapter {
         ]),
       ).filter(Boolean),
     );
+    const databaseDeclaration =
+      existingContent.match(
+        /const\s+databaseConfig\s*=\s*process\.env\.DATABASE_URL[\s\S]*?\n\s*};/,
+      )?.[0] ?? '';
+    if (databaseDeclaration) {
+      moduleImports = [
+        'TypeOrmModule.forRoot(databaseConfig)',
+        ...moduleImports.filter(
+          (moduleImport) => !moduleImport.startsWith('TypeOrmModule.forRoot('),
+        ),
+      ];
+      const rootEntities = importDeclarations.flatMap((declaration) => {
+        const match = declaration.match(
+          /^import\s+\{\s*(\w+)\s*\}\s+from\s+['"]\.[^'"]+\.entity['"];$/,
+        );
+        return match ? [match[1]] : [];
+      });
+      if (rootEntities.length > 0) {
+        moduleImports = [
+          ...moduleImports.filter(
+            (moduleImport) =>
+              !moduleImport.startsWith('TypeOrmModule.forFeature('),
+          ),
+          `TypeOrmModule.forFeature([${[...new Set(rootEntities)].sort().join(', ')}])`,
+        ];
+      }
+    }
     const controllers = Array.from(
       new Set([
         ...this.extractModuleArray(existingContent, 'controllers'),
@@ -1813,6 +1561,7 @@ export class NestJsTargetAdapter implements TargetAdapter {
     return [
       ...importDeclarations,
       '',
+      ...(databaseDeclaration ? [databaseDeclaration, ''] : []),
       '@Module({',
       '  imports: [',
       ...moduleImports.map((moduleImport) => `    ${moduleImport},`),
@@ -1842,6 +1591,33 @@ export class NestJsTargetAdapter implements TargetAdapter {
       .split('\n')
       .map((line) => line.trim())
       .filter((line) => line.startsWith('import ') && line.endsWith(';'));
+  }
+
+  private mergeImportDeclarations(declarations: string[]): string[] {
+    const namedByModule = new Map<string, Set<string>>();
+    const other = new Set<string>();
+    for (const declaration of declarations) {
+      const named = declaration.match(
+        /^import\s+\{([^}]+)\}\s+from\s+(['"])([^'"]+)\2;$/,
+      );
+      if (!named) {
+        other.add(declaration);
+        continue;
+      }
+      const names = namedByModule.get(named[3]) ?? new Set<string>();
+      named[1]
+        .split(',')
+        .map((name) => name.trim())
+        .filter(Boolean)
+        .forEach((name) => names.add(name));
+      namedByModule.set(named[3], names);
+    }
+    return [
+      ...other,
+      ...Array.from(namedByModule, ([moduleName, names]) =>
+        `import { ${[...names].sort().join(', ')} } from '${moduleName}';`,
+      ),
+    ];
   }
 
   private extractModuleArray(content: string, propertyName: string): string[] {
@@ -1956,6 +1732,7 @@ export class NestJsTargetAdapter implements TargetAdapter {
     const className = content.match(/export\s+class\s+(\w+)/)?.[1] ?? '';
     const propertyTypes = new Map<string, string>();
     const properties = new Set<string>();
+    const arrayProperties = new Set<string>();
     const propertyPattern = /^\s*(\w+)[!?]?:\s*([\w\[\]]+)/gm;
     let propertyMatch: RegExpExecArray | null;
 
@@ -1963,6 +1740,9 @@ export class NestJsTargetAdapter implements TargetAdapter {
       const propertyName = propertyMatch[1];
       const propertyType = propertyMatch[2].replace(/\[\]$/, '');
       properties.add(propertyName);
+      if (propertyMatch[2].endsWith('[]')) {
+        arrayProperties.add(propertyName);
+      }
       propertyTypes.set(propertyType, propertyName);
     }
 
@@ -1971,6 +1751,7 @@ export class NestJsTargetAdapter implements TargetAdapter {
       content,
       className,
       properties,
+      arrayProperties,
       propertyTypes,
     };
   }
@@ -1997,6 +1778,39 @@ export class NestJsTargetAdapter implements TargetAdapter {
         inverseProperty: relationMatch[4],
         sourceVariable: this.toCamelCase(relationMatch[6]),
         sourceProperty: relationMatch[5],
+      });
+    }
+
+    return relations;
+  }
+
+  private parseInverseRelations(content: string) {
+    const relations: Array<{
+      raw: string;
+      targetClass: string;
+      inverseProperty: string;
+      ownerProperty: string;
+    }> = [];
+    // Matches a non-owning @OneToMany whose inverse lambda points at a property
+    // the owning entity is expected to declare, e.g.
+    //   @OneToMany(() => HealthMetric, m => m.user)
+    //   healthMetrics!: HealthMetric[];
+    const relationPattern =
+      /@OneToMany\(\s*\(\)\s*=>\s*(\w+)\s*,\s*(\w+)\s*=>\s*\2\.(\w+)\s*\)\s*\n\s*(\w+)[!?]?:\s*(\w+)\[\]/g;
+    let relationMatch: RegExpExecArray | null;
+
+    while ((relationMatch = relationPattern.exec(content))) {
+      // Only reconcile when the collection element type matches the target
+      // class the decorator references; anything else is malformed input.
+      if (relationMatch[1] !== relationMatch[5]) {
+        continue;
+      }
+
+      relations.push({
+        raw: relationMatch[0],
+        targetClass: relationMatch[1],
+        inverseProperty: relationMatch[3],
+        ownerProperty: relationMatch[4],
       });
     }
 
@@ -2091,6 +1905,8 @@ export class NestJsTargetAdapter implements TargetAdapter {
       'class-validator': '^0.14.1',
       'reflect-metadata': '^0.2.2',
       'sql.js': '^1.10.3',
+      pg: '^8.13.1',
+      mysql2: '^3.11.5',
       'swagger-ui-express': '^5.0.1',
       typeorm: '^0.3.20',
       rxjs: '^7.8.1',
@@ -2101,6 +1917,34 @@ export class NestJsTargetAdapter implements TargetAdapter {
       '@types/node': '^22.10.2',
       typescript: '^5.7.2',
     };
+
+    // The test toolchain is owned by the pipeline's test adapter, which
+    // injects jest/ts-jest at versions compatible with the TypeScript above.
+    // Drop any copy the LLM invents (e.g. ts-jest@^27, which peer-requires
+    // typescript <5.0 and makes `npm install` fail ERESOLVE against ts@5.x).
+    const pipelineOwnedDevDeps = new Set([
+      'jest',
+      'ts-jest',
+      '@types/jest',
+      'ts-loader',
+      'supertest',
+      '@types/supertest',
+    ]);
+    packageJson.devDependencies = Object.fromEntries(
+      Object.entries(this.asRecord(packageJson.devDependencies)).filter(
+        ([name]) => !pipelineOwnedDevDeps.has(name),
+      ),
+    );
+
+    // A package pinned in dependencies must not reappear in devDependencies
+    // with a different (possibly conflicting) version the LLM invented.
+    const dependencies = this.asRecord(packageJson.dependencies);
+    packageJson.devDependencies = Object.fromEntries(
+      Object.entries(this.asRecord(packageJson.devDependencies)).filter(
+        ([name]) => !(name in dependencies),
+      ),
+    );
+
     return `${JSON.stringify(packageJson, null, 2)}\n`;
   }
 

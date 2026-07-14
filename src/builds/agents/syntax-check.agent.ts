@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { ScopedTerminalTool } from '../tools/scoped-terminal.tool';
+import { ScopedTerminalTool } from '../../tools/scoped-terminal.tool';
 import { TargetAdapter } from '../targets/target-adapter';
 import { BuildRunResult } from '../types/build.types';
 

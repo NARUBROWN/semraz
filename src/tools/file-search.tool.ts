@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { WorkspaceWriter } from '../runtime/workspace-writer';
+import { WorkspaceWriter } from '../builds/runtime/workspace-writer';
 
 @Injectable()
 export class FileSearchTool {

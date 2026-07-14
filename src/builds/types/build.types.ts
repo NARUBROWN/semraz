@@ -14,6 +14,7 @@ export interface NormalizedBuildRequest {
   target: TargetFramework;
   projectDir: string;
   outputName: string;
+  workspaceId?: string;
 }
 
 export interface MarkdownDocument {
@@ -60,6 +61,28 @@ export interface GeneratedFile {
   content: string;
 }
 
+/** A single find/replace edit applied to an existing file. */
+export interface FileEdit {
+  find: string;
+  replace: string;
+}
+
+/**
+ * A targeted patch to an existing file: a set of find/replace edits applied in
+ * order. Preferred over a full-file rewrite when only part of a file changes,
+ * so the model does not regenerate (and risk regressing) passing code.
+ */
+export interface FilePatch {
+  path: string;
+  edits: FileEdit[];
+}
+
+/** Outcome of attempting to apply one FilePatch. */
+export interface FilePatchFailure {
+  path: string;
+  reason: string;
+}
+
 export interface CommandSpec {
   command: string;
   args: string[];
@@ -94,6 +117,7 @@ export interface BuildResponse {
   build: BuildRunResult;
   artifact: ArtifactSummary;
   repairAttempts: number;
+  finalRepairAttempts: number;
   completedEntities: EntityImplementationResult[];
   buildPlan: BuildPlan;
   completedTasks: TaskExecutionResult[];
@@ -110,6 +134,7 @@ export type BuildTaskKind =
   | 'entity-relations'
   | 'orm-registration'
   | 'crud-feature'
+  | 'endpoint-workflow'
   | 'business-workflow'
   | 'final-e2e';
 
@@ -149,6 +174,7 @@ export interface CodeContext {
   entity?: EntitySpec;
   task?: BuildTask;
   relevantFiles: string[];
+  fileContents: Array<{ path: string; content: string }>;
   symbols: CodeSymbol[];
   previousFailures: BuildRunResult[];
   instructions: string[];

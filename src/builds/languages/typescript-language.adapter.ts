@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { CodeSymbol, SourceLanguage } from '../types/build.types';
-import { AstSearchTool } from '../tools/ast-search.tool';
+import { AstSearchTool } from '../../tools/ast-search.tool';
 import { LanguageAdapter } from './language-adapter';
 
 @Injectable()

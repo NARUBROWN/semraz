@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { CommandRunner } from '../runtime/command-runner';
-import { CommandSpec } from '../types/build.types';
+import { CommandRunner } from '../builds/runtime/command-runner';
+import { CommandSpec } from '../builds/types/build.types';
 
 const ALLOWED_COMMANDS = new Set(['npm', 'node', 'python3', 'go']);
 

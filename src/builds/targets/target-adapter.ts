@@ -20,19 +20,21 @@ export interface TargetAdapter {
   planBuildTasks(spec: AppSpec): BuildPlan;
   entityContextHints(entity: EntitySpec): string[];
   taskContextHints(task: BuildTask): string[];
+  /** Files that must be returned for the task to be considered complete. */
+  requiredTaskFiles(task: BuildTask): string[];
+  validateTaskFiles?(params: {
+    spec: AppSpec;
+    task: BuildTask;
+    files: GeneratedFile[];
+  }): string[];
+  /** Whole-application contract gate run after every final build/smoke pass. */
+  validateApplicationFiles?(params: {
+    spec: AppSpec;
+    files: GeneratedFile[];
+  }): string[];
   taskGenerationPrompt(params: {
     spec: AppSpec;
     task: BuildTask;
-    context: CodeContext;
-  }): string;
-  deterministicTaskFiles?(params: {
-    spec: AppSpec;
-    task: BuildTask;
-    context: CodeContext;
-  }): GeneratedFile[];
-  entityGenerationPrompt(params: {
-    spec: AppSpec;
-    entity: EntitySpec;
     context: CodeContext;
   }): string;
   normalizeGeneratedFiles(files: GeneratedFile[]): GeneratedFile[];

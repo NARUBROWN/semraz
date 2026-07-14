@@ -1,8 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import ts from 'typescript';
 import path from 'node:path';
-import { CodeSymbol } from '../types/build.types';
-import { WorkspaceWriter } from '../runtime/workspace-writer';
+import { CodeSymbol } from '../builds/types/build.types';
+import { WorkspaceWriter } from '../builds/runtime/workspace-writer';
 
 @Injectable()
 export class AstSearchTool {

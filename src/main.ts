@@ -1,11 +1,16 @@
 import { NestFactory } from '@nestjs/core';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
+import { installServerLogBuffer } from './feedback/server-log-buffer';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  installServerLogBuffer();
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  // Feedback screenshots are posted as base64 data URLs, so the default 100kb JSON limit is too small.
+  app.useBodyParser('json', { limit: '15mb' });
   app.enableCors({
-    origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
+    origin: [/^http:\/\/localhost:\d+$/, /^http:\/\/127\.0\.0\.1:\d+$/],
   });
-  await app.listen(process.env.PORT ?? 3000);
+  await app.listen(process.env.PORT ?? process.env.APP_PORT ?? 3000);
 }
 bootstrap();

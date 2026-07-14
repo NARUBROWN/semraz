@@ -23,4 +23,14 @@ describe('AppController', () => {
       });
     });
   });
+
+  describe('locale', () => {
+    it('uses Korean for a Korean IP location', () => {
+      expect(appController.getLocale('KR')).toEqual({ locale: 'ko' });
+    });
+
+    it('uses English for all other IP locations', () => {
+      expect(appController.getLocale('US')).toEqual({ locale: 'en' });
+    });
+  });
 });

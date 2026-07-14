@@ -1,10 +1,16 @@
-import { BadRequestException, Body, Controller, Get, Param, Post, Res } from '@nestjs/common';
-import { randomUUID } from 'crypto';
+import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Param, Post, Res, UseGuards } from '@nestjs/common';
+import { execFile } from 'child_process';
 import type { Response } from 'express';
-import { mkdir, writeFile } from 'fs/promises';
+import { mkdir, mkdtemp, rm, stat, writeFile } from 'fs/promises';
+import { tmpdir } from 'os';
 import { dirname, join } from 'path';
+import { promisify } from 'util';
+import { uuidv7 } from 'uuidv7';
+import { AccessTokenGuard } from './auth/guards/access-token.guard';
 import { BuildService } from './builds/builds.service';
 import { TargetFramework } from './builds/types/build.types';
+
+const execFileAsync = promisify(execFile);
 
 type GenerateWorkspaceRequest = {
   project?: {
@@ -58,6 +64,7 @@ type GenerateWorkspaceRequest = {
       type: string;
     }>;
     description?: string;
+    requirements?: string;
   }>;
 };
 
@@ -91,8 +98,9 @@ export class GenerateController {
   constructor(private readonly buildService: BuildService) {}
 
   @Post('workspace')
+  @UseGuards(AccessTokenGuard)
   async createWorkspace(@Body() request: GenerateWorkspaceRequest) {
-    const workspaceId = randomUUID();
+    const workspaceId = uuidv7();
     const workspaceRoot = join(process.cwd(), '.semraz', 'workspaces');
     const workspacePath = join(workspaceRoot, workspaceId);
 
@@ -111,12 +119,30 @@ export class GenerateController {
     };
   }
 
+  @Delete('workspace/:workspaceId/nestjs')
+  @UseGuards(AccessTokenGuard)
+  async deleteNestJsApp(@Param('workspaceId') workspaceId: string) {
+    this.validateWorkspaceId(workspaceId);
+
+    const appPath = join(process.cwd(), '.semraz', 'workspaces', workspaceId, 'nestjs-app');
+
+    try {
+      await rm(appPath, { recursive: true, force: true });
+    } catch {
+      // Directory may not exist — that's fine
+    }
+
+    return { deleted: true };
+  }
+
   @Post('workspace/:workspaceId/nestjs')
+  @UseGuards(AccessTokenGuard)
   async runNestJsAgent(@Param('workspaceId') workspaceId: string) {
     return this.runNestJsBuild(workspaceId);
   }
 
   @Get('workspace/:workspaceId/nestjs/events')
+  @UseGuards(AccessTokenGuard)
   async streamNestJsAgent(
     @Param('workspaceId') workspaceId: string,
     @Res() response: Response,
@@ -164,6 +190,54 @@ export class GenerateController {
     }
   }
 
+  @Get('workspace/:workspaceId/nestjs/download')
+  async downloadNestJsApp(
+    @Param('workspaceId') workspaceId: string,
+    @Res() response: Response,
+  ) {
+    this.validateWorkspaceId(workspaceId);
+
+    const workspacePath = join(process.cwd(), '.semraz', 'workspaces', workspaceId);
+    const appPath = join(workspacePath, 'nestjs-app');
+
+    try {
+      const appStats = await stat(appPath);
+
+      if (!appStats.isDirectory()) {
+        throw new Error('Generated app path is not a directory.');
+      }
+    } catch {
+      throw new NotFoundException('Generated NestJS app was not found.');
+    }
+
+    const tempDir = await mkdtemp(join(tmpdir(), 'semraz-nestjs-download-'));
+    const zipPath = join(tempDir, `nestjs-app-${workspaceId}.zip`);
+
+    try {
+      await execFileAsync(
+        'zip',
+        [
+          '-r',
+          '-q',
+          zipPath,
+          'nestjs-app',
+          '-x',
+          'nestjs-app/node_modules/*',
+          'nestjs-app/dist/*',
+          'nestjs-app/coverage/*',
+        ],
+        { cwd: workspacePath },
+      );
+
+      response.download(zipPath, `nestjs-app-${workspaceId}.zip`, () => {
+        void rm(tempDir, { recursive: true, force: true });
+      });
+    } catch (error) {
+      await rm(tempDir, { recursive: true, force: true });
+      throw error;
+    }
+  }
+
   private validateWorkspaceId(workspaceId: string) {
     if (!/^[0-9a-f-]{36}$/i.test(workspaceId)) {
       throw new BadRequestException('Invalid workspace id.');
@@ -180,6 +254,7 @@ export class GenerateController {
       target: TargetFramework.NestJS,
       projectDir: join('.semraz', 'workspaces', workspaceId),
       outputName: 'nestjs-app',
+      workspaceId,
     }, onProgress);
 
     return {
@@ -192,6 +267,8 @@ export class GenerateController {
       buildPlan: build.buildPlan,
       completedTasks: build.completedTasks,
       repairAttempts: build.repairAttempts,
+      finalRepairAttempts: build.finalRepairAttempts,
+      completedEntities: build.completedEntities,
     };
   }
 }
@@ -302,6 +379,9 @@ function buildEndpointsMarkdown(request: GenerateWorkspaceRequest) {
             '',
             '#### Description',
             operation.description?.trim() || '-',
+            '',
+            '#### Implementation Requirements',
+            operation.requirements?.trim() || '-',
             '',
             '#### Request Fields',
             requestFields || '- none',

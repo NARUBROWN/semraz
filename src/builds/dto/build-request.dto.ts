@@ -28,4 +28,8 @@ export class BuildRequestDto {
   @IsOptional()
   @IsString()
   outputName?: string;
+
+  @IsOptional()
+  @IsString()
+  workspaceId?: string;
 }
