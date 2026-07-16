@@ -9,6 +9,7 @@ import { AuthModule } from './auth/auth.module';
 import { BuildsModule } from './builds/builds.module';
 import { FeedbackModule } from './feedback/feedback.module';
 import { GenerateController } from './generate.controller';
+import { DesignConsistencyModule } from './design-consistency/design-consistency.module';
 import { TestsModule } from './tests/tests.module';
 import { WorkspacesModule } from './workspaces/workspaces.module';
 
@@ -37,6 +38,7 @@ import { WorkspacesModule } from './workspaces/workspaces.module';
     WorkspacesModule,
     BuildsModule,
     TestsModule,
+    DesignConsistencyModule,
   ],
   controllers: [AppController, AiWizardController, GenerateController],
   providers: [AppService],

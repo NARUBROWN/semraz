@@ -96,6 +96,8 @@ describe('NestJsTargetAdapter', () => {
     expect(prompt).toContain('ParseUUIDPipe');
     expect(prompt).toContain('raw foreign-key violation');
     expect(prompt).toContain('@ApiOperation');
+    expect(prompt).toContain('TypeOrmModule.forFeature');
+    expect(prompt).toContain("Nest can't resolve dependencies");
   });
 
   it('plans a dedicated endpoint workflow task for non-CRUD endpoints', () => {
@@ -249,6 +251,7 @@ describe('NestJsTargetAdapter', () => {
 
     expect(command.command).toBe('node');
     expect(command.args.join('\n')).toContain('NestFactory.create');
+    expect(command.args.join('\n')).toContain('abortOnError: false');
     expect(command.args.join('\n')).toContain('SwaggerModule.createDocument');
     expect(command.args.join('\n')).toContain("app.listen(0, '127.0.0.1')");
     expect(command.args.join('\n')).toContain('/health');
@@ -258,6 +261,29 @@ describe('NestJsTargetAdapter', () => {
       NODE_ENV: 'test',
       PORT: null,
     });
+    expect(command.displayCommand).toBe(
+      'node -e <NestJS runtime verification script>',
+    );
+  });
+
+  it('does not require unfinished API routes during entity tasks', () => {
+    const task = adapter
+      .planBuildTasks(spec)
+      .tasks.find((candidate) => candidate.id === 'entity-user-fields')!;
+    const command = adapter.e2eCheckCommands(spec, task)[0].args.join('\n');
+
+    expect(command).toContain('const expectedEndpoints = [];');
+    expect(command).not.toContain('"path":"/users"');
+  });
+
+  it('requires target entity routes once its CRUD task runs', () => {
+    const task = adapter
+      .planBuildTasks(spec)
+      .tasks.find((candidate) => candidate.id === 'feature-user-crud')!;
+    const command = adapter.e2eCheckCommands(spec, task)[0].args.join('\n');
+
+    expect(command).toContain('"path":"/users"');
+    expect(command).toContain('"path":"/users/{id}"');
   });
 
   it('repairs article-inserted exception throws deterministically', () => {
@@ -271,6 +297,68 @@ describe('NestJsTargetAdapter', () => {
 
     expect(file.content).toBe(
       'throw new NotFoundException(`missing`);\nthrow new BadRequestException(`bad`);',
+    );
+  });
+
+  it('repairs single-quoted TypeORM check expressions deterministically', () => {
+    const [file] = adapter.normalizeGeneratedFiles([
+      {
+        path: 'src/inspection/inspection.entity.ts',
+        content:
+          "@Check('CHK_inspection_result_details_non_empty', '\"resultDetails\" <> ''')",
+      },
+    ]);
+
+    expect(file.content).toBe(
+      "@Check('CHK_inspection_result_details_non_empty', `\"resultDetails\" <> ''`)",
+    );
+  });
+
+  it('adds a deterministic RESTRICT policy to owning relations missing onDelete', () => {
+    const [file] = adapter.normalizeGeneratedFiles([
+      {
+        path: 'src/inspection/inspection.entity.ts',
+        content: [
+          '@ManyToOne(() => Building, (building) => building.inspections, { nullable: false })',
+          'building!: Building;',
+          '@OneToOne(() => AuditLog, (auditLog) => auditLog.inspection)',
+          'auditLog!: AuditLog;',
+          "@ManyToOne(() => Owner, { onDelete: 'CASCADE' })",
+          'owner!: Owner;',
+        ].join('\n'),
+      },
+    ]);
+
+    expect(file.content).toContain("{ nullable: false, onDelete: 'RESTRICT' }");
+    expect(file.content).toContain(
+      "(auditLog) => auditLog.inspection, { onDelete: 'RESTRICT' })",
+    );
+    expect(file.content.match(/onDelete: 'CASCADE'/g)).toHaveLength(1);
+    expect(file.content.match(/onDelete:/g)).toHaveLength(3);
+  });
+
+  it('adds reversible migration foreign-key drops deterministically', () => {
+    const [file] = adapter.normalizeGeneratedFiles([
+      {
+        path: 'src/migrations/1700000000000-InitialSchema.ts',
+        content: [
+          'export class InitialSchema1700000000000 implements MigrationInterface {',
+          '  async up(queryRunner: QueryRunner) {',
+          "    await queryRunner.createForeignKey('maintenance_tasks', new TableForeignKey({ name: 'FK_maintenance_tasks_inspection_id', columnNames: ['inspection_id'], referencedTableName: 'inspections', referencedColumnNames: ['id'] }));",
+          '  }',
+          '  async down(queryRunner: QueryRunner) {',
+          "    await queryRunner.dropTable('maintenance_tasks');",
+          '  }',
+          '}',
+        ].join('\n'),
+      },
+    ]);
+
+    expect(file.content).toContain(
+      "await queryRunner.dropForeignKey('maintenance_tasks', 'FK_maintenance_tasks_inspection_id');",
+    );
+    expect(file.content.indexOf('dropForeignKey')).toBeLessThan(
+      file.content.indexOf('dropTable'),
     );
   });
 
@@ -574,6 +662,123 @@ describe('NestJsTargetAdapter', () => {
     expect(command).toContain('has an empty request schema');
     expect(command).toContain('has no documented 2xx response');
     expect(command).toContain('listResponse.status >= 500');
+  });
+
+  it('embeds normalized request and response fields in the runtime OpenAPI gate', () => {
+    const contractSpec: AppSpec = {
+      ...spec,
+      entities: [
+        {
+          ...spec.entities[0],
+          endpoints: [
+            {
+              method: 'POST',
+              path: '/users',
+              requestFields: [{ name: 'email', type: 'string' }],
+              responseFields: [
+                { name: 'id', type: 'uuid' },
+                { name: 'email', type: 'string' },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    const command = adapter.e2eCheckCommands(contractSpec)[0].args.join('\n');
+
+    expect(command).toContain('request schema is missing');
+    expect(command).toContain('response schema is missing');
+    expect(command).toContain('"name":"email"');
+    expect(command).toContain('"name":"id"');
+  });
+
+  it('rejects bare UUID keys and unnamed, non-reversible migration foreign keys', () => {
+    const task = adapter
+      .planBuildTasks(spec)
+      .tasks.find((candidate) => candidate.kind === 'database-migration')!;
+    const problems = adapter.validateTaskFiles({
+      spec,
+      task,
+      files: [
+        {
+          path: 'src/migrations/1700000000000-InitialSchema.ts',
+          content: [
+            'export class InitialSchema1700000000000 implements MigrationInterface {',
+            '  async up(queryRunner: QueryRunner) {',
+            '    // User id email Profile displayName',
+            "    await queryRunner.createForeignKey('profile', new TableForeignKey({ columnNames: ['userId'], referencedTableName: 'user', referencedColumnNames: ['id'] }));",
+            '  }',
+            '  async down(queryRunner: QueryRunner) {}',
+            '}',
+          ].join('\n'),
+        },
+      ],
+    });
+
+    expect(problems).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('must generate UUID primary keys'),
+        expect.stringContaining('deterministic name'),
+      ]),
+    );
+  });
+
+  it('rejects @IsDate without JSON-to-Date transformation', () => {
+    const temporalSpec: AppSpec = {
+      ...spec,
+      entities: [
+        {
+          name: 'Event',
+          fields: [
+            { name: 'id', type: 'uuid', required: true },
+            { name: 'occurredAt', type: 'datetime', required: true },
+          ],
+          relations: [],
+          endpoints: [
+            {
+              method: 'POST',
+              path: '/events',
+              operationName: 'Create Event',
+              requestFields: [
+                { name: 'occurredAt', type: 'datetime', required: true },
+              ],
+            },
+          ],
+          businessRules: [],
+        },
+      ],
+    };
+    const task = adapter
+      .planBuildTasks(temporalSpec)
+      .tasks.find((candidate) => candidate.id === 'feature-event-crud')!;
+    const problems = adapter.validateTaskFiles({
+      spec: temporalSpec,
+      task,
+      files: [
+        {
+          path: 'src/event/event.controller.ts',
+          content:
+            "@ApiTags('events') @Controller('events') class C { @ApiOperation({}) @ApiCreatedResponse({}) @Post() create() {} }",
+        },
+        {
+          path: 'src/event/dto/create-event.dto.ts',
+          content:
+            'class CreateEventDto {\n  @IsDate()\n  occurredAt!: Date;\n}',
+        },
+        {
+          path: 'src/event/dto/update-event.dto.ts',
+          content:
+            "import { PartialType } from '@nestjs/swagger'; class UpdateEventDto extends PartialType(CreateEventDto) {}",
+        },
+      ],
+    });
+
+    expect(problems).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('must also use @Type(() => Date)'),
+      ]),
+    );
   });
 
   it('rejects routes invented by any controller during the final contract gate', () => {

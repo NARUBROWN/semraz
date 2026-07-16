@@ -141,9 +141,8 @@ export class ApplicationTestGraph {
           onProgress,
         ),
       )
-      .addNode(
-        'generateTestCode',
-        (state) => this.generateTestsSequentially(state, onProgress),
+      .addNode('generateTestCode', (state) =>
+        this.generateTestsSequentially(state, onProgress),
       )
       .addNode(
         'runCoverageAndTests',
@@ -295,11 +294,17 @@ export class ApplicationTestGraph {
       generatedTests: (result.generatedFiles ?? []).map((file) => ({
         path: file.path,
         cases: Array.from(
-          file.content.matchAll(/\b(?:describe|it|test)\s*\(\s*(['"`])([^\n]*?)\1/g),
+          file.content.matchAll(
+            /\b(?:describe|it|test)\s*\(\s*(['"`])([^\n]*?)\1/g,
+          ),
           (match) => match[2].trim(),
-        ).filter(Boolean).slice(0, 20),
+        )
+          .filter(Boolean)
+          .slice(0, 20),
       })),
-      patchedTestFiles: (result.currentPatches ?? []).map((patch) => patch.path),
+      patchedTestFiles: (result.currentPatches ?? []).map(
+        (patch) => patch.path,
+      ),
     };
   }
 
@@ -419,23 +424,29 @@ export class ApplicationTestGraph {
         targetTotal: targets.length,
       };
 
+      const targetContext = this.contextForTarget(state.context, targetFile);
+      const previousTargetPatchFailures = state.patchFailures.filter(
+        (failure) => failure.path === targetFile,
+      );
+      const generateTarget = () =>
+        this.testGenerationAgent.generate({
+          appDir: state.request.appDir,
+          spec: state.spec!,
+          context: targetContext,
+          attempt: round,
+          coverageGaps: state.coverageGaps,
+          adapter,
+          workspaceId: state.request.workspaceId,
+          patchFailures: previousTargetPatchFailures,
+          targetFile,
+        });
+
       let output: Awaited<ReturnType<TestCodeGenerationAgent['generate']>>;
       try {
         output = await this.runProgressPhase(
           'Generating individual Jest test',
           detail,
-          () =>
-            this.testGenerationAgent.generate({
-              appDir: state.request.appDir,
-              spec: state.spec!,
-              context: state.context!,
-              attempt: round,
-              coverageGaps: state.coverageGaps,
-              adapter,
-              workspaceId: state.request.workspaceId,
-              patchFailures: state.patchFailures,
-              targetFile,
-            }),
+          generateTarget,
           onProgress,
         );
       } catch (error) {
@@ -456,8 +467,21 @@ export class ApplicationTestGraph {
       const targetPatches = output.patches.filter(
         (patch) => patch.path === targetFile,
       );
-      if (targetSpecs.length === 0 && targetPatches.length === 0) {
-        const errorSummary = `${targetFile}: the test generator returned no file or patch for the selected target`;
+      const applicationPatches = output.applicationPatches ?? [];
+      patchFailures.push(...output.patchFailures);
+      if (
+        targetSpecs.length === 0 &&
+        targetPatches.length === 0 &&
+        applicationPatches.length === 0
+      ) {
+        const rejectedPatchFailures = output.patchFailures
+          .filter((failure) => failure.path === targetFile)
+          .map((failure) => failure.reason)
+          .join('; ');
+        const errorSummary = `${targetFile}: ${
+          rejectedPatchFailures ||
+          'the test generator returned no file or patch for the selected target'
+        }`;
         onProgress?.({
           stage: 'failed',
           message: 'Generating individual Jest test',
@@ -477,30 +501,75 @@ export class ApplicationTestGraph {
           ...detail,
           ...this.generatedTestProgress('Generating framework test code', {
             generatedFiles: targetSpecs,
-            currentPatches: targetPatches,
+            currentPatches: [...targetPatches, ...applicationPatches],
           }),
+          classification: output.classification,
+          diagnosis: output.diagnosis,
         },
       });
 
-      await this.runProgressPhase(
-        'Applying individual Jest test',
-        detail,
-        async () => {
-          const replaced = await this.codePatchTool.applyPlainFileReplacements(
-            state.request.appDir,
-            output.files,
-          );
-          const patched = await this.codePatchTool.applyEditPatches(
-            state.request.appDir,
-            targetPatches,
-            adapter.validatePatchedSyntax?.bind(adapter),
-          );
-          changedFiles.push(...replaced, ...patched.applied);
-          patchFailures.push(...patched.failures);
-          return {};
-        },
-        onProgress,
-      );
+      try {
+        await this.runProgressPhase(
+          'Applying individual Jest test',
+          detail,
+          async () => {
+            const replaced =
+              await this.codePatchTool.applyPlainFileReplacements(
+                state.request.appDir,
+                output.files,
+              );
+            const applicationPatched =
+              applicationPatches.length > 0
+                ? await this.codePatchTool.applyEditPatches(
+                    state.request.appDir,
+                    applicationPatches,
+                    adapter.validatePatchedSyntax?.bind(adapter),
+                  )
+                : { applied: [], failures: [] };
+            const testPatched = await this.codePatchTool.applyEditPatches(
+              state.request.appDir,
+              targetPatches,
+              adapter.validatePatchedSyntax?.bind(adapter),
+            );
+            const applyFailures = [
+              ...applicationPatched.failures,
+              ...testPatched.failures,
+            ];
+            changedFiles.push(
+              ...replaced,
+              ...applicationPatched.applied,
+              ...testPatched.applied,
+            );
+            patchFailures.push(...applyFailures);
+            if (applyFailures.length > 0) {
+              throw new Error(
+                applyFailures
+                  .map(
+                    (failure) =>
+                      `${failure.path}: failed to apply test patch (${failure.reason})`,
+                  )
+                  .join('; '),
+              );
+            }
+            return {};
+          },
+          onProgress,
+        );
+      } catch (error) {
+        failedResults.push({
+          target: targetFile,
+          result: {
+            success: false,
+            commands: [],
+            errorSummary: `${targetFile}: ${
+              error instanceof Error
+                ? error.message
+                : 'Test patch application failed'
+            }`,
+          },
+        });
+        continue;
+      }
       generatedFiles.push(...targetSpecs);
 
       onProgress?.({
@@ -515,7 +584,9 @@ export class ApplicationTestGraph {
         { includeSetup, targetFile },
       );
       commands.push(...result.commands);
-      const setupCommandCount = includeSetup ? adapter.setupCommands().length : 0;
+      const setupCommandCount = includeSetup
+        ? adapter.setupCommands().length
+        : 0;
       dependenciesReady =
         dependenciesReady ||
         (includeSetup &&
@@ -547,7 +618,9 @@ export class ApplicationTestGraph {
                 `FAIL ${target}\n${result.errorSummary ?? 'Unknown targeted test failure'}`,
             )
             .join('\n\n'),
-      testsPassed: success ? targets.length : targets.length - failedResults.length,
+      testsPassed: success
+        ? targets.length
+        : targets.length - failedResults.length,
       testsFailed: failedResults.length,
       testsTotal: targets.length,
     };
@@ -563,6 +636,48 @@ export class ApplicationTestGraph {
       failures: success ? [] : [testResult],
       targetValidationFailed: !success,
     };
+  }
+
+  private contextForTarget(
+    context: TestCodeContext,
+    targetFile: string,
+  ): TestCodeContext {
+    const previousFailures = context.previousFailures.flatMap((failure) => {
+      const errorSummary = this.failureSummaryForTarget(
+        failure.errorSummary,
+        targetFile,
+        context.failedSpecPaths,
+      );
+      return errorSummary ? [{ ...failure, commands: [], errorSummary }] : [];
+    });
+
+    return {
+      ...context,
+      previousFailures,
+      failureDiagnoses: context.failureDiagnoses.filter(
+        (diagnosis) => diagnosis.filePath === targetFile,
+      ),
+      failedSpecPaths: context.failedSpecPaths.includes(targetFile)
+        ? [targetFile]
+        : [],
+    };
+  }
+
+  private failureSummaryForTarget(
+    summary: string | undefined,
+    targetFile: string,
+    failedSpecPaths: string[],
+  ): string | undefined {
+    if (!summary?.trim()) return undefined;
+    const marker = `FAIL ${targetFile}`;
+    const start = summary.indexOf(marker);
+    if (start < 0) {
+      return failedSpecPaths.length === 1 && failedSpecPaths[0] === targetFile
+        ? summary.trim()
+        : undefined;
+    }
+    const next = summary.indexOf('\n\nFAIL ', start + marker.length);
+    return summary.slice(start, next < 0 ? undefined : next).trim();
   }
 
   private async runProgressPhase<T>(

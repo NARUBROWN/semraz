@@ -36,6 +36,17 @@ export class NestJsTargetAdapter implements TargetAdapter {
 
   constructor(readonly language: TypeScriptLanguageAdapter) {}
 
+  requiresIndependentTaskReview(task: BuildTask): boolean {
+    return new Set<BuildTask['kind']>([
+      'entity-relations',
+      'orm-registration',
+      'database-migration',
+      'crud-feature',
+      'endpoint-workflow',
+      'business-workflow',
+    ]).has(task.kind);
+  }
+
   readonly planningGuidance =
     'Plan a minimal but complete NestJS TypeScript backend shell first. Entity feature modules will be added later by an entity implementation loop.';
 
@@ -529,6 +540,21 @@ export class NestJsTargetAdapter implements TargetAdapter {
           `${entity.name} controller must document a success response for every route`,
         );
       }
+      const endpointsWithResponseShape = expected.filter(
+        (endpoint) =>
+          Array.isArray(endpoint.responseFields) &&
+          endpoint.responseFields.length > 0,
+      ).length;
+      const typedResponseCount = (
+        controller.match(
+          /@Api(?:Response|OkResponse|CreatedResponse)\s*\(\s*\{[\s\S]{0,1200}?\b(?:type|schema)\s*:/g,
+        ) ?? []
+      ).length;
+      if (typedResponseCount < endpointsWithResponseShape) {
+        problems.push(
+          `${entity.name} controller must attach a concrete type or schema to every documented response shape`,
+        );
+      }
       const expectsUuidParam = expected.some((endpoint) => {
         const pathParams = Array.from(
           endpoint.path.matchAll(/:([A-Za-z0-9_]+)/g),
@@ -586,6 +612,53 @@ export class NestJsTargetAdapter implements TargetAdapter {
         );
       }
       const normalizedMigration = this.normalizeName(migration);
+      const expectedGeneratedUuidPrimaryKeys = params.spec.entities.filter(
+        (migrationEntity) =>
+          migrationEntity.fields.some((field) => {
+            const name =
+              typeof field.name === 'string' ? field.name.trim() : '';
+            const type =
+              typeof field.type === 'string' ? field.type.toLowerCase() : '';
+            return name === 'id' && type.includes('uuid');
+          }),
+      ).length;
+      const generatedUuidMarkers = Math.min(
+        (migration.match(/\bisGenerated\s*:\s*true/g) ?? []).length,
+        (migration.match(/\bgenerationStrategy\s*:\s*['"]uuid['"]/g) ?? [])
+          .length,
+      );
+      const databaseUuidDefaults = (
+        migration.match(/\b(?:gen_random_uuid|uuid_generate_v4)\s*\(/g) ?? []
+      ).length;
+      if (
+        generatedUuidMarkers + databaseUuidDefaults <
+        expectedGeneratedUuidPrimaryKeys
+      ) {
+        problems.push(
+          `Initial migration must generate UUID primary keys for all ${expectedGeneratedUuidPrimaryKeys} entities; bare uuid columns have no runtime default`,
+        );
+      }
+      const foreignKeyBlocks =
+        migration.match(/new\s+TableForeignKey\s*\(\s*\{[\s\S]*?\}\s*\)/g) ??
+        [];
+      const downBody =
+        migration.match(
+          /\bdown\s*\(\s*queryRunner\s*:\s*QueryRunner[^)]*\)\s*\{([\s\S]*)\}\s*$/,
+        )?.[1] ?? '';
+      for (const block of foreignKeyBlocks) {
+        const constraintName = block.match(
+          /\bname\s*:\s*['"]([^'"]+)['"]/,
+        )?.[1];
+        if (!constraintName) {
+          problems.push(
+            'Every TableForeignKey must have a deterministic name so down() can reverse it reliably',
+          );
+        } else if (!downBody.includes(constraintName)) {
+          problems.push(
+            `down() must drop the exact foreign-key constraint ${constraintName}`,
+          );
+        }
+      }
       for (const migrationEntity of params.spec.entities) {
         const entityToken = this.normalizeName(migrationEntity.name);
         if (!normalizedMigration.includes(entityToken)) {
@@ -622,6 +695,60 @@ export class NestJsTargetAdapter implements TargetAdapter {
     ) {
       const slug = this.toKebabCase(entity.name);
       const service = byPath.get(`src/${slug}/${slug}.service.ts`) ?? '';
+      const featureModule = byPath.get(`src/${slug}/${slug}.module.ts`) ?? '';
+      for (const endpoint of entity.endpoints.filter(
+        (candidate): candidate is EndpointSpec =>
+          typeof candidate.method === 'string' &&
+          typeof candidate.path === 'string',
+      )) {
+        const requirements = this.endpointImplementationRequirements(endpoint);
+        if (!/(?:404|not\s+found|존재하지|없으면)/i.test(requirements)) {
+          continue;
+        }
+        for (const field of endpoint.requestFields ?? []) {
+          const fieldName =
+            typeof field.name === 'string' ? field.name.trim() : '';
+          if (
+            !fieldName.endsWith('Id') ||
+            !new RegExp(`\\b${this.escapeRegExp(fieldName)}\\b`, 'i').test(
+              requirements,
+            )
+          ) {
+            continue;
+          }
+          const related = params.spec.entities.find(
+            (candidate) =>
+              this.normalizeName(candidate.name) ===
+              this.normalizeName(fieldName.slice(0, -2)),
+          );
+          if (!related || related.name === entity.name) continue;
+          const relatedClass = this.toPascalCase(related.name);
+          if (
+            !new RegExp(
+              `@InjectRepository\\(\\s*${this.escapeRegExp(relatedClass)}\\s*\\)`,
+            ).test(service) ||
+            !/\b(?:findOne|findOneBy)\s*\(/.test(service) ||
+            !/\bNotFoundException\b/.test(service)
+          ) {
+            problems.push(
+              `${entity.name} service must look up ${related.name} and throw NotFoundException when ${fieldName} does not exist`,
+            );
+          }
+          const forFeature =
+            featureModule.match(
+              /TypeOrmModule\.forFeature\s*\(\s*\[([\s\S]*?)\]\s*\)/,
+            )?.[1] ?? '';
+          if (
+            !new RegExp(`\\b${this.escapeRegExp(relatedClass)}\\b`).test(
+              forFeature,
+            )
+          ) {
+            problems.push(
+              `${entity.name} module must register ${related.name} in TypeOrmModule.forFeature for its injected repository`,
+            );
+          }
+        }
+      }
       if (
         /\b(?:repository|\w+Repository)\.(?:remove|delete)\s*\(/.test(
           service,
@@ -825,10 +952,13 @@ export class NestJsTargetAdapter implements TargetAdapter {
       'Preserve ERD nullability exactly: fields marked required/NN must use non-optional properties and must never emit nullable: true; create DTOs must validate those fields as required.',
       'Use @CreateDateColumn for createdAt and @UpdateDateColumn for updatedAt so timestamps are server-managed. Do not accept primary keys, createdAt, or updatedAt in create/update DTOs unless the endpoint specification explicitly requires client ownership.',
       'Use @nestjs/swagger PartialType for update DTOs and add @ApiProperty/@ApiPropertyOptional where needed so every request and response field appears in OpenAPI.',
-      'Every controller must declare @ApiTags and every route must declare @ApiOperation plus explicit success and relevant 400/404/409 response decorators.',
+      'Every controller must declare @ApiTags and every route must declare @ApiOperation plus explicit success and relevant 400/404/409 response decorators. A success decorator must include a concrete response type or schema whose properties match responseFields; an empty @ApiResponse is invalid.',
       'Validate UUID route parameters with ParseUUIDPipe. Use class-validator constraints that match the field type and documented business rules, including non-empty, enum, numeric range, and length constraints when specified.',
+      'JSON date/time inputs must use @IsDateString(), or combine @Type(() => Date) with @IsDate(); @IsDate() alone rejects normal JSON ISO strings before transformation.',
       'Enforce invariants twice when appropriate: class-validator for request feedback and TypeORM unique/check/foreign-key constraints for persisted integrity.',
       'Before saving a relation foreign key, query the related repository and throw NotFoundException when it does not exist; never expose a raw foreign-key violation as HTTP 500.',
+      "Every @InjectRepository(Entity) used by a provider must be available in that provider's own Nest module context. Add every injected entity to TypeOrmModule.forFeature([...]) in the feature module; registration in AppModule alone does not make repository providers visible inside imported feature modules.",
+      "When codeContext.previousFailures reports \"Nest can't resolve dependencies\", treat the named module context and missing provider token as authoritative. Compare the service constructor's @InjectRepository(...) parameters with that feature module's TypeOrmModule.forFeature([...]) list, import missing entity classes, and return the corrected complete module file together with the other required task files.",
       'Convert expected uniqueness or relation conflicts into ConflictException or BadRequestException with a stable message instead of returning a generic 500.',
       'For repository.remove/delete/save operations that can hit foreign-key or unique constraints, wrap the operation with withPersistenceConflict from src/database/persistence-conflict.ts (or provide an equivalent driver-aware catch) so PostgreSQL 23503/23505, MySQL 1451/1452, and SQLite FOREIGN KEY constraint errors become ConflictException rather than HTTP 500.',
       'Declare an explicit onDelete policy for every TypeORM relation, choosing RESTRICT by default unless the specification explicitly requires CASCADE or SET NULL.',
@@ -844,9 +974,11 @@ export class NestJsTargetAdapter implements TargetAdapter {
       'When currentTask.kind is "entity-relations", update both sides of every relationship in the current task relation skeleton only; do not process relations assigned to other map shards.',
       'When currentTask.kind is "entity-relations", return EVERY file listed in currentTask.allowedFiles in one response, each with complete final content; never return only a subset of the entity files.',
       'When currentTask.kind is "entity-relations", every property referenced by an inverse-side lambda (e.g. x => x.user) must be declared in the returned content of that related entity file with the matching @ManyToOne/@OneToMany decorator.',
+      'When currentTask.kind is "entity-relations", every @ManyToOne/@OneToOne owning a required (NN) foreign key must include nullable: false in its relation options.',
       'When a previous TypeScript error says Property "x" does not exist on type "Y", either change the inverse-side lambda to an existing property or add property "x" to class Y if Y is in currentTask.allowedFiles.',
       'When currentTask.kind is "database-migration", return exactly src/migrations/1700000000000-InitialSchema.ts, export class InitialSchema1700000000000 (the timestamp suffix is required by TypeORM), and implement a portable MigrationInterface using QueryRunner/Table/TableForeignKey APIs for the configured production database.',
       'When currentTask.kind is "database-migration", include every normalized entity table and preserve scalar types, nullability, primary keys, unique/check constraints, indexes, and relation foreign keys; create foreign keys after all tables and reverse the order in down().',
+      'When currentTask.kind is "database-migration", every UUID id column must have TypeORM UUID generation metadata (isGenerated: true and generationStrategy: "uuid") or an appropriate database UUID default. Give every TableForeignKey a stable explicit name and drop that exact name in down().',
       'When currentTask.kind is "business-workflow", implement only workflows that are explicitly supported by the normalized spec and existing entity files.',
       'When currentTask.kind is "business-workflow", create or update only the dedicated business-workflows module/controller/service/DTO files and AppModule registration.',
       'When currentTask.kind is "business-workflow", do not edit or replace existing entity CRUD services/controllers; preserve all generated CRUD features.',
@@ -1331,6 +1463,24 @@ export class NestJsTargetAdapter implements TargetAdapter {
           `src/${slug}/dto: request field ${name} needs class-validator constraints`,
         );
       }
+      const declaredType =
+        typeof field.type === 'string' ? field.type.toLowerCase() : '';
+      const decoratedProperty =
+        dtoSource.match(
+          new RegExp(
+            `((?:\\s*@[A-Za-z][^\\n]*\\n)+\\s*)${this.escapeRegExp(name)}[!?]?:`,
+            'm',
+          ),
+        )?.[1] ?? '';
+      if (
+        /(?:date|time)/.test(declaredType) &&
+        /@IsDate\s*\(/.test(decoratedProperty) &&
+        !/@Type\s*\(\s*\(\s*\)\s*=>\s*Date\s*\)/.test(decoratedProperty)
+      ) {
+        problems.push(
+          `src/${slug}/dto: ${name} uses @IsDate() but must also use @Type(() => Date), or use @IsDateString() for JSON ISO strings`,
+        );
+      }
     }
     const updateDto = dtoFiles.find((file) =>
       file.path.endsWith(`update-${slug}.dto.ts`),
@@ -1571,7 +1721,18 @@ export class NestJsTargetAdapter implements TargetAdapter {
         return {
           ...file,
           content: this.normalizeCommonTypescriptSyntax(
-            this.normalizePortableColumnTypes(file.content),
+            this.normalizeRelationDeletePolicies(
+              this.normalizePortableColumnTypes(file.content),
+            ),
+          ),
+        };
+      }
+
+      if (file.path === 'src/migrations/1700000000000-InitialSchema.ts') {
+        return {
+          ...file,
+          content: this.normalizeCommonTypescriptSyntax(
+            this.normalizeMigrationDownForeignKeys(file.content),
           ),
         };
       }
@@ -1585,6 +1746,102 @@ export class NestJsTargetAdapter implements TargetAdapter {
 
       return file;
     });
+  }
+
+  private normalizeRelationDeletePolicies(content: string): string {
+    const relation = /@(ManyToOne|OneToOne)\s*\(/g;
+    let cursor = 0;
+    let normalized = '';
+    let match: RegExpExecArray | null;
+
+    while ((match = relation.exec(content)) !== null) {
+      const open = content.indexOf('(', match.index);
+      const close = this.findMatchingParenthesis(content, open);
+      if (close < 0) break;
+
+      normalized += content.slice(cursor, match.index);
+      const decorator = content.slice(match.index, close + 1);
+      if (/\bonDelete\s*:/.test(decorator)) {
+        normalized += decorator;
+      } else {
+        const inner = content.slice(open + 1, close);
+        const args = this.splitTopLevelArguments(inner);
+        const lastArg = args.at(-1)?.trim() ?? '';
+        if (lastArg.startsWith('{') && lastArg.endsWith('}')) {
+          const optionsClose = decorator.lastIndexOf('}');
+          const beforeOptionsClose = decorator.slice(0, optionsClose);
+          const trailingWhitespace =
+            beforeOptionsClose.match(/\s*$/)?.[0] ?? '';
+          const optionsBody = beforeOptionsClose.slice(
+            0,
+            beforeOptionsClose.length - trailingWhitespace.length,
+          );
+          const needsComma = !optionsBody.endsWith('{');
+          normalized += `${optionsBody}${needsComma ? ',' : ''} onDelete: 'RESTRICT'${trailingWhitespace}${decorator.slice(optionsClose)}`;
+        } else {
+          normalized += `${decorator.slice(0, -1)}, { onDelete: 'RESTRICT' })`;
+        }
+      }
+      cursor = close + 1;
+      relation.lastIndex = close + 1;
+    }
+
+    return normalized + content.slice(cursor);
+  }
+
+  private findMatchingParenthesis(content: string, open: number): number {
+    let depth = 0;
+    let quote = '';
+    let escaped = false;
+    for (let index = open; index < content.length; index += 1) {
+      const char = content[index];
+      if (quote) {
+        if (escaped) escaped = false;
+        else if (char === '\\') escaped = true;
+        else if (char === quote) quote = '';
+        continue;
+      }
+      if (char === "'" || char === '"' || char === '`') {
+        quote = char;
+      } else if (char === '(') {
+        depth += 1;
+      } else if (char === ')' && --depth === 0) {
+        return index;
+      }
+    }
+    return -1;
+  }
+
+  private splitTopLevelArguments(content: string): string[] {
+    const args: string[] = [];
+    let start = 0;
+    let round = 0;
+    let curly = 0;
+    let square = 0;
+    let quote = '';
+    let escaped = false;
+    for (let index = 0; index < content.length; index += 1) {
+      const char = content[index];
+      if (quote) {
+        if (escaped) escaped = false;
+        else if (char === '\\') escaped = true;
+        else if (char === quote) quote = '';
+        continue;
+      }
+      if (char === "'" || char === '"' || char === '`') quote = char;
+      else if (char === '(') round += 1;
+      else if (char === ')') round -= 1;
+      else if (char === '{') curly += 1;
+      else if (char === '}') curly -= 1;
+      else if (char === '[') square += 1;
+      else if (char === ']') square -= 1;
+      else if (char === ',' && round === 0 && curly === 0 && square === 0) {
+        args.push(content.slice(start, index));
+        start = index + 1;
+      }
+    }
+    args.push(content.slice(start));
+    return args;
   }
 
   mergeGeneratedFile(params: {
@@ -1794,7 +2051,34 @@ export class NestJsTargetAdapter implements TargetAdapter {
     ];
   }
 
-  e2eCheckCommands(): CommandSpec[] {
+  e2eCheckCommands(spec?: AppSpec, task?: BuildTask): CommandSpec[] {
+    const expectedEndpoints = this.taskVerificationEndpoints(spec, task)
+      .filter(
+        (endpoint) =>
+          typeof endpoint.method === 'string' &&
+          typeof endpoint.path === 'string',
+      )
+      .map((endpoint) => ({
+        method: String(endpoint.method).toLowerCase(),
+        path: this.normalizeEndpointPath(String(endpoint.path)).replace(
+          /:([A-Za-z0-9_]+)/g,
+          '{$1}',
+        ),
+        requestFields: Array.isArray(endpoint.requestFields)
+          ? endpoint.requestFields
+          : [],
+        responseFields: Array.isArray(endpoint.responseFields)
+          ? endpoint.responseFields
+          : [],
+      }))
+      .filter(
+        (endpoint, index, all) =>
+          all.findIndex(
+            (candidate) =>
+              candidate.method === endpoint.method &&
+              candidate.path === endpoint.path,
+          ) === index,
+      );
     return [
       {
         command: 'node',
@@ -1807,14 +2091,25 @@ export class NestJsTargetAdapter implements TargetAdapter {
             "const { DataSource } = require('typeorm');",
             "const fs = require('node:fs');",
             "const { AppModule } = require('./dist/app.module');",
+            `const expectedEndpoints = ${JSON.stringify(expectedEndpoints)};`,
             '(async () => {',
-            '  const app = await NestFactory.create(AppModule, { logger: false });',
+            '  const app = await NestFactory.create(AppModule, { logger: false, abortOnError: false });',
             '  app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));',
             "  const config = new DocumentBuilder().setTitle('smoke').setVersion('1').build();",
             '  const document = SwaggerModule.createDocument(app, config);',
             '  const resolveSchema = (schema) => {',
             "    const ref = schema && schema['$ref'];",
-            "    return ref ? document.components?.schemas?.[ref.split('/').pop()] : schema;",
+            "    const resolved = ref ? document.components?.schemas?.[ref.split('/').pop()] : schema;",
+            '    if (resolved?.allOf) {',
+            '      const members = resolved.allOf.map(resolveSchema).filter(Boolean);',
+            '      return { ...resolved, properties: Object.assign({}, ...members.map((member) => member.properties || {})), required: [...new Set(members.flatMap((member) => member.required || []))] };',
+            '    }',
+            '    return resolved;',
+            '  };',
+            '  const schemaProperties = (schema) => {',
+            '    const resolved = resolveSchema(schema);',
+            "    const value = resolved?.type === 'array' ? resolveSchema(resolved.items) : resolved;",
+            '    return value?.properties || {};',
             '  };',
             '  for (const [route, pathItem] of Object.entries(document.paths)) {',
             '    for (const [method, operation] of Object.entries(pathItem || {})) {',
@@ -1826,6 +2121,21 @@ export class NestJsTargetAdapter implements TargetAdapter {
             '        const resolved = resolveSchema(bodySchema);',
             '        if (!resolved || Object.keys(resolved.properties || {}).length === 0) throw new Error(`${method.toUpperCase()} ${route} has an empty request schema`);',
             '      }',
+            '    }',
+            '  }',
+            '  for (const expected of expectedEndpoints) {',
+            '    const operation = document.paths?.[expected.path]?.[expected.method];',
+            '    if (!operation) throw new Error(`Missing OpenAPI operation ${expected.method.toUpperCase()} ${expected.path}`);',
+            "    const requestSchema = operation.requestBody?.content?.['application/json']?.schema;",
+            '    const requestProperties = schemaProperties(requestSchema);',
+            '    for (const field of expected.requestFields || []) {',
+            '      if (field?.name && !requestProperties[field.name]) throw new Error(`${expected.method.toUpperCase()} ${expected.path} request schema is missing ${field.name}`);',
+            '    }',
+            '    const successStatus = Object.keys(operation.responses || {}).find((status) => /^2\\d\\d$/.test(status));',
+            "    const responseSchema = successStatus && operation.responses?.[successStatus]?.content?.['application/json']?.schema;",
+            '    const responseProperties = schemaProperties(responseSchema);',
+            '    for (const field of expected.responseFields || []) {',
+            '      if (field?.name && !responseProperties[field.name]) throw new Error(`${expected.method.toUpperCase()} ${expected.path} response schema is missing ${field.name}`);',
             '    }',
             '  }',
             '  const localDataSource = app.get(DataSource);',
@@ -1849,6 +2159,7 @@ export class NestJsTargetAdapter implements TargetAdapter {
         ],
         description:
           'Start the HTTP app, build Swagger, call health, and close',
+        displayCommand: 'node -e <NestJS runtime verification script>',
         env: {
           DATABASE_URL: null,
           NODE_ENV: 'test',
@@ -1859,10 +2170,78 @@ export class NestJsTargetAdapter implements TargetAdapter {
   }
 
   private normalizeCommonTypescriptSyntax(content: string): string {
-    return content.replace(
-      /\bthrow\s+(?:a|an)\s+([A-Z][A-Za-z0-9_]*Exception)\s*\(/g,
-      'throw new $1(',
+    return content
+      .replace(
+        /\bthrow\s+(?:a|an)\s+([A-Z][A-Za-z0-9_]*Exception)\s*\(/g,
+        'throw new $1(',
+      )
+      .replace(
+        /@Check\((['"][^,\n]+['"])\s*,\s*'([^`\n]*)'\)/g,
+        '@Check($1, `$2`)',
+      );
+  }
+
+  private normalizeMigrationDownForeignKeys(content: string): string {
+    const foreignKeys: Array<{ table: string; name: string }> = [];
+    const createForeignKey =
+      /createForeignKey\s*\(\s*['"]([^'"]+)['"]\s*,\s*new\s+TableForeignKey\s*\(\s*\{([\s\S]*?)\}\s*\)\s*\)/g;
+    let match: RegExpExecArray | null;
+    while ((match = createForeignKey.exec(content)) !== null) {
+      const name = match[2].match(/\bname\s*:\s*['"]([^'"]+)['"]/)?.[1];
+      if (name) foreignKeys.push({ table: match[1], name });
+    }
+    if (foreignKeys.length === 0) return content;
+
+    const downStart = content.match(
+      /\bdown\s*\(\s*queryRunner\s*:\s*QueryRunner[^)]*\)\s*\{/,
     );
+    if (!downStart || downStart.index === undefined) return content;
+    const downBody = content.slice(downStart.index + downStart[0].length);
+    const missing = foreignKeys.filter(({ name }) => !downBody.includes(name));
+    if (missing.length === 0) return content;
+
+    const indent = '    ';
+    const drops = missing
+      .reverse()
+      .map(
+        ({ table, name }) =>
+          `${indent}await queryRunner.dropForeignKey('${table}', '${name}');`,
+      )
+      .join('\n');
+    const insertion = downStart.index + downStart[0].length;
+    return `${content.slice(0, insertion)}\n${drops}${content.slice(insertion)}`;
+  }
+
+  private taskVerificationEndpoints(spec?: AppSpec, task?: BuildTask) {
+    if (!spec) return [];
+
+    const allEndpoints = [
+      ...(spec.endpoints ?? []),
+      ...spec.entities.flatMap((entity) => entity.endpoints),
+    ];
+    if (!task || task.kind === 'business-workflow') return allEndpoints;
+    if (!task.targetEntity) return [];
+
+    const entity = spec.entities.find(
+      (candidate) => candidate.name === task.targetEntity,
+    );
+    if (!entity) return [];
+    if (task.kind === 'crud-feature') {
+      return entity.endpoints.filter((endpoint): endpoint is EndpointSpec => {
+        if (
+          typeof endpoint.method !== 'string' ||
+          typeof endpoint.path !== 'string'
+        ) {
+          return false;
+        }
+        return this.isConventionalCrudEndpoint(
+          entity,
+          endpoint as EndpointSpec,
+        );
+      });
+    }
+    if (task.kind === 'endpoint-workflow') return entity.endpoints;
+    return [];
   }
 
   private toKebabCase(value: string) {

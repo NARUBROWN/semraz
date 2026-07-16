@@ -43,6 +43,9 @@ export class TestCodebaseSearchAgent {
     const reportedFailedSpecPaths = this.failedSpecPaths(
       params.previousFailures,
     );
+    const existingFailedSpecPaths = reportedFailedSpecPaths.filter((filePath) =>
+      sourceFiles.includes(filePath),
+    );
     const contractViolations = await this.findContractViolations(
       params.appDir,
       sourceFiles,
@@ -50,7 +53,7 @@ export class TestCodebaseSearchAgent {
     );
     const failedSpecPaths = Array.from(
       new Set([
-        ...reportedFailedSpecPaths,
+        ...existingFailedSpecPaths,
         ...contractViolations.map((violation) => violation.filePath),
       ]),
     );
@@ -58,7 +61,7 @@ export class TestCodebaseSearchAgent {
       ...contractViolations,
       ...this.diagnoseFailures(
         params.previousFailures,
-        reportedFailedSpecPaths,
+        existingFailedSpecPaths,
         controllerContracts,
       ),
     ];
@@ -102,7 +105,7 @@ export class TestCodebaseSearchAgent {
         'Use isolated controller/service tests for branch detail and the managed Supertest E2E suite for real module, pipe, route, database, and OpenAPI integration.',
         'Treat an app that cannot compile in-memory with DATABASE_URL removed as a product defect, not a reason to skip E2E coverage.',
         'Validate DTO constraints, relation failures, and documented uniqueness/range rules with realistic inputs.',
-        'Never modify application source while generating tests. Report product-code defects through failing tests instead.',
+        'Classify failures against the specification. Repair bad tests through spec patches; when required behavior is missing from application source, repair it only through the explicit CODE_DEFECT applicationPatches flow.',
       ],
     };
   }

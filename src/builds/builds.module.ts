@@ -14,9 +14,14 @@ import { ToolsModule } from '../tools/tools.module';
 import { TypeScriptLanguageAdapter } from './languages/typescript-language.adapter';
 import { NestJsTargetAdapter } from './targets/nestjs.adapter';
 import { TargetAdapterRegistry } from './targets/target-adapter.registry';
+import { DesignConsistencyModule } from '../design-consistency/design-consistency.module';
 
 @Module({
-  imports: [ToolsModule, TypeOrmModule.forFeature([LlmUsageLog])],
+  imports: [
+    ToolsModule,
+    DesignConsistencyModule,
+    TypeOrmModule.forFeature([LlmUsageLog]),
+  ],
   controllers: [BuildController],
   providers: [
     BuildService,

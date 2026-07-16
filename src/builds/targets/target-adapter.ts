@@ -22,6 +22,8 @@ export interface TargetAdapter {
   taskContextHints(task: BuildTask): string[];
   /** Files that must be returned for the task to be considered complete. */
   requiredTaskFiles(task: BuildTask): string[];
+  /** Enables an independent LLM contract review for high-risk generated tasks. */
+  requiresIndependentTaskReview?(task: BuildTask): boolean;
   validateTaskFiles?(params: {
     spec: AppSpec;
     task: BuildTask;
@@ -51,5 +53,5 @@ export interface TargetAdapter {
   installCommands(): CommandSpec[];
   buildCommands(): CommandSpec[];
   syntaxCheckCommands(): CommandSpec[];
-  e2eCheckCommands(): CommandSpec[];
+  e2eCheckCommands(spec?: AppSpec, task?: BuildTask): CommandSpec[];
 }

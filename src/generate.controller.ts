@@ -1,4 +1,16 @@
-import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Param, Post, Res, UseGuards } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Delete,
+  Get,
+  NotFoundException,
+  Param,
+  Post,
+  Res,
+  UnprocessableEntityException,
+  UseGuards,
+} from '@nestjs/common';
 import { execFile } from 'child_process';
 import type { Response } from 'express';
 import { mkdir, mkdtemp, rm, stat, writeFile } from 'fs/promises';
@@ -9,6 +21,7 @@ import { uuidv7 } from 'uuidv7';
 import { AccessTokenGuard } from './auth/guards/access-token.guard';
 import { BuildService } from './builds/builds.service';
 import { TargetFramework } from './builds/types/build.types';
+import { DesignConsistencyService } from './design-consistency/design-consistency.service';
 
 const execFileAsync = promisify(execFile);
 
@@ -95,27 +108,78 @@ type ParsedOperation = {
 
 @Controller('api/generate')
 export class GenerateController {
-  constructor(private readonly buildService: BuildService) {}
+  constructor(
+    private readonly buildService: BuildService,
+    private readonly designConsistency: DesignConsistencyService,
+  ) {}
 
   @Post('workspace')
   @UseGuards(AccessTokenGuard)
   async createWorkspace(@Body() request: GenerateWorkspaceRequest) {
+    const stageReports = (
+      ['project', 'planning', 'erd', 'operations'] as const
+    ).map((stage) => this.designConsistency.validateTransition(stage, request));
+    const issues = Array.from(
+      new Map(
+        stageReports
+          .flatMap((report) => report.issues)
+          .map((issue) => [
+            `${issue.code}:${issue.location}:${issue.message}`,
+            issue,
+          ]),
+      ).values(),
+    );
+    const validation = {
+      valid: issues.every((issue) => issue.severity !== 'error'),
+      issues,
+      checked: stageReports.at(-1)?.checked ?? {
+        entities: 0,
+        relations: 0,
+        operations: 0,
+      },
+    };
+    if (!validation.valid) {
+      throw new UnprocessableEntityException({
+        message:
+          '이전 단계와 현재 단계의 설계 교차 검증을 통과하지 못했습니다. 표시된 Project, Planning, ERD 또는 API 항목을 먼저 수정해 주세요.',
+        issues: validation.issues,
+        checked: validation.checked,
+      });
+    }
+
     const workspaceId = uuidv7();
     const workspaceRoot = join(process.cwd(), '.semraz', 'workspaces');
     const workspacePath = join(workspaceRoot, workspaceId);
 
     await mkdir(workspacePath, { recursive: true });
     await Promise.all([
-      writeFile(join(workspacePath, 'PROJECT.md'), buildProjectMarkdown(request), 'utf8'),
-      writeFile(join(workspacePath, 'ERD.md'), buildErdMarkdown(request), 'utf8'),
-      writeFile(join(workspacePath, 'endpoints.md'), buildEndpointsMarkdown(request), 'utf8'),
-      writeFile(join(workspacePath, 'rules.md'), buildRulesMarkdown(request), 'utf8'),
+      writeFile(
+        join(workspacePath, 'PROJECT.md'),
+        buildProjectMarkdown(request),
+        'utf8',
+      ),
+      writeFile(
+        join(workspacePath, 'ERD.md'),
+        buildErdMarkdown(request),
+        'utf8',
+      ),
+      writeFile(
+        join(workspacePath, 'endpoints.md'),
+        buildEndpointsMarkdown(request),
+        'utf8',
+      ),
+      writeFile(
+        join(workspacePath, 'rules.md'),
+        buildRulesMarkdown(request),
+        'utf8',
+      ),
     ]);
 
     return {
       workspaceId,
       workspacePath,
       files: ['PROJECT.md', 'ERD.md', 'endpoints.md', 'rules.md'],
+      validation,
     };
   }
 
@@ -124,7 +188,13 @@ export class GenerateController {
   async deleteNestJsApp(@Param('workspaceId') workspaceId: string) {
     this.validateWorkspaceId(workspaceId);
 
-    const appPath = join(process.cwd(), '.semraz', 'workspaces', workspaceId, 'nestjs-app');
+    const appPath = join(
+      process.cwd(),
+      '.semraz',
+      'workspaces',
+      workspaceId,
+      'nestjs-app',
+    );
 
     try {
       await rm(appPath, { recursive: true, force: true });
@@ -189,7 +259,10 @@ export class GenerateController {
       send('done', { ok: true });
     } catch (error) {
       send('agent-error', {
-        message: error instanceof Error ? error.message : 'Unexpected NestJS generation error.',
+        message:
+          error instanceof Error
+            ? error.message
+            : 'Unexpected NestJS generation error.',
       });
     } finally {
       clearInterval(heartbeat);
@@ -206,7 +279,12 @@ export class GenerateController {
   ) {
     this.validateWorkspaceId(workspaceId);
 
-    const workspacePath = join(process.cwd(), '.semraz', 'workspaces', workspaceId);
+    const workspacePath = join(
+      process.cwd(),
+      '.semraz',
+      'workspaces',
+      workspaceId,
+    );
     const appPath = join(workspacePath, 'nestjs-app');
 
     try {
@@ -259,12 +337,15 @@ export class GenerateController {
   ) {
     this.validateWorkspaceId(workspaceId);
 
-    const build = await this.buildService.build({
-      target: TargetFramework.NestJS,
-      projectDir: join('.semraz', 'workspaces', workspaceId),
-      outputName: 'nestjs-app',
-      workspaceId,
-    }, onProgress);
+    const build = await this.buildService.build(
+      {
+        target: TargetFramework.NestJS,
+        projectDir: join('.semraz', 'workspaces', workspaceId),
+        outputName: 'nestjs-app',
+        workspaceId,
+      },
+      onProgress,
+    );
 
     return {
       workspaceId,
@@ -288,7 +369,7 @@ function buildProjectMarkdown(request: GenerateWorkspaceRequest) {
   return `# ${project?.name ?? 'Untitled Semraz Project'}
 
 ## Product Brief
-This file is the source-of-truth project summary prepared from the Semraz Project and Planning steps.
+${project?.description ?? ''}
 
 ## Description
 ${project?.description ?? ''}
@@ -311,25 +392,32 @@ ${project?.planning?.constraints ?? ''}
 `;
 }
 
-function buildErdMarkdown(request: GenerateWorkspaceRequest) {
+export function buildErdMarkdown(request: GenerateWorkspaceRequest) {
   const entities = request.entities ?? [];
   const relations = request.relations ?? [];
+  const entityNameById = new Map(
+    entities.map((entity) => [entity.id, entity.name]),
+  );
 
   const entitySections = entities
     .map((entity) => {
       const fields = entity.fields ?? [];
       const fieldRows = fields
-        .map((field) =>
-          [
-            `| ${field.name}`,
+        .map((field) => {
+          const reference = field.referencesEntityId
+            ? (entityNameById.get(field.referencesEntityId) ??
+              field.referencesEntityId)
+            : '-';
+
+          return `| ${[
+            field.name,
             field.type,
             field.isPrimaryKey ? 'yes' : 'no',
             field.isNotNull ? 'yes' : 'no',
             field.isForeignKey ? 'yes' : 'no',
-            field.referencesEntityId ?? '-',
-            '|',
-          ].join(' | '),
-        )
+            reference,
+          ].join(' | ')} |`;
+        })
         .join('\n');
 
       return `## Entity: ${entity.name}
@@ -344,9 +432,11 @@ ${fieldRows || '| _none_ | string | no | no | no | - |'}
   const relationRows = relations
     .map((relation) => {
       const source =
-        entities.find((entity) => entity.id === relation.sourceId)?.name ?? relation.sourceId;
+        entities.find((entity) => entity.id === relation.sourceId)?.name ??
+        relation.sourceId;
       const target =
-        entities.find((entity) => entity.id === relation.targetId)?.name ?? relation.targetId;
+        entities.find((entity) => entity.id === relation.targetId)?.name ??
+        relation.targetId;
 
       return `- ${source} ${relation.sourceCardinality}:${relation.targetCardinality} ${target} (${relation.direction})`;
     })
@@ -368,11 +458,15 @@ function buildEndpointsMarkdown(request: GenerateWorkspaceRequest) {
   const sections = entities
     .map((entity) => {
       const endpointRows = operations
-        .filter((operation) => operation.enabled && operation.entityId === entity.id)
+        .filter(
+          (operation) => operation.enabled && operation.entityId === entity.id,
+        )
         .map((operation) => {
           const requestFields = describeOperationFields(
             entity,
-            operation.requestFieldIds ?? operation.payloadFieldIds ?? [],
+            operation.requestFieldIds && operation.requestFieldIds.length > 0
+              ? operation.requestFieldIds
+              : (operation.payloadFieldIds ?? []),
             operation.requestCustomFields ?? [],
           );
           const responseFields = describeOperationFields(
@@ -424,13 +518,12 @@ function describeOperationFields(
   const entityFields = fieldIds
     .map((fieldId) => entity.fields?.find((field) => field.id === fieldId))
     .filter((field): field is NonNullable<typeof field> => Boolean(field))
-    .map((field) => `- ${field.name}: ${field.type}`)
+    .map((field) => `- ${field.name}: ${field.type}`);
   const operationFields = customFields
     .filter((field) => field.name.trim())
-    .map((field) => `- ${field.name.trim()}: ${field.type.trim() || 'string'}`)
+    .map((field) => `- ${field.name.trim()}: ${field.type.trim() || 'string'}`);
 
-  return [...entityFields, ...operationFields]
-    .join('\n');
+  return [...entityFields, ...operationFields].join('\n');
 }
 
 function buildRulesMarkdown(request: GenerateWorkspaceRequest) {
@@ -520,7 +613,9 @@ function parseMarkdownRows(markdown: string) {
     .split('\n')
     .filter((line) => line.trim().startsWith('|'))
     .filter((line) => !line.includes('---'))
-    .filter((line) => !line.includes('| Column |') && !line.includes('| Entity |'))
+    .filter(
+      (line) => !line.includes('| Column |') && !line.includes('| Entity |'),
+    )
     .map((line) =>
       line
         .split('|')
@@ -542,9 +637,14 @@ async function generateNestJsApplication({
 }) {
   const files = new Map<string, string>();
   const moduleImports = entities
-    .map((entity) => `import { ${toPascalCase(entity.name)}Module } from './${toKebabCase(entity.name)}/${toKebabCase(entity.name)}.module';`)
+    .map(
+      (entity) =>
+        `import { ${toPascalCase(entity.name)}Module } from './${toKebabCase(entity.name)}/${toKebabCase(entity.name)}.module';`,
+    )
     .join('\n');
-  const moduleNames = entities.map((entity) => `${toPascalCase(entity.name)}Module`).join(', ');
+  const moduleNames = entities
+    .map((entity) => `${toPascalCase(entity.name)}Module`)
+    .join(', ');
 
   files.set('package.json', buildGeneratedPackageJson(projectName));
   files.set('tsconfig.json', buildGeneratedTsConfig());
@@ -562,18 +662,32 @@ export class AppModule {}
   );
 
   for (const entity of entities) {
-    const entityOperations = operations.filter((operation) => operation.entityName === entity.name);
+    const entityOperations = operations.filter(
+      (operation) => operation.entityName === entity.name,
+    );
     const folder = `src/${toKebabCase(entity.name)}`;
     const dtoFolder = `${folder}/dto`;
 
-    files.set(`${folder}/${toKebabCase(entity.name)}.module.ts`, buildEntityModule(entity));
-    files.set(`${folder}/${toKebabCase(entity.name)}.service.ts`, buildEntityService(entity));
+    files.set(
+      `${folder}/${toKebabCase(entity.name)}.module.ts`,
+      buildEntityModule(entity),
+    );
+    files.set(
+      `${folder}/${toKebabCase(entity.name)}.service.ts`,
+      buildEntityService(entity),
+    );
     files.set(
       `${folder}/${toKebabCase(entity.name)}.controller.ts`,
       buildEntityController(entity, entityOperations),
     );
-    files.set(`${dtoFolder}/create-${toKebabCase(entity.name)}.dto.ts`, buildDto(entity, 'Create'));
-    files.set(`${dtoFolder}/update-${toKebabCase(entity.name)}.dto.ts`, buildDto(entity, 'Update'));
+    files.set(
+      `${dtoFolder}/create-${toKebabCase(entity.name)}.dto.ts`,
+      buildDto(entity, 'Create'),
+    );
+    files.set(
+      `${dtoFolder}/update-${toKebabCase(entity.name)}.dto.ts`,
+      buildDto(entity, 'Update'),
+    );
   }
 
   await Promise.all(
@@ -724,10 +838,15 @@ export class ${pascalName}Service {
 `;
 }
 
-function buildEntityController(entity: ParsedEntity, operations: ParsedOperation[]) {
+function buildEntityController(
+  entity: ParsedEntity,
+  operations: ParsedOperation[],
+) {
   const pascalName = toPascalCase(entity.name);
   const kebabName = toKebabCase(entity.name);
-  const methods = operations.map((operation, index) => buildControllerMethod(operation, index)).join('\n\n');
+  const methods = operations
+    .map((operation, index) => buildControllerMethod(operation, index))
+    .join('\n\n');
 
   return `import { Body, Controller, Delete, Get, Param, Patch, Post, Put } from '@nestjs/common';
 import { Create${pascalName}Dto } from './dto/create-${kebabName}.dto';
@@ -749,10 +868,13 @@ function buildControllerMethod(operation: ParsedOperation, index: number) {
   const route = operation.path.replace(/^\//, '');
   const methodName = `${toCamelCase(operation.label)}${index + 1}`;
   const hasId = route.includes(':id');
-  const hasPayload = operation.payload.length > 0 || ['POST', 'PUT', 'PATCH'].includes(method);
+  const hasPayload =
+    operation.payload.length > 0 || ['POST', 'PUT', 'PATCH'].includes(method);
   const params = [
     hasId ? "@Param('id') id: string" : '',
-    hasPayload ? `@Body() payload: ${operation.kind === 'crud' && operation.label === 'Create' ? 'Create' : 'Update'}${toPascalCase(operation.entityName)}Dto` : '',
+    hasPayload
+      ? `@Body() payload: ${operation.kind === 'crud' && operation.label === 'Create' ? 'Create' : 'Update'}${toPascalCase(operation.entityName)}Dto`
+      : '',
   ].filter(Boolean);
   const serviceCall = buildServiceCall(operation, hasId, hasPayload);
 
@@ -762,7 +884,11 @@ function buildControllerMethod(operation: ParsedOperation, index: number) {
   }`;
 }
 
-function buildServiceCall(operation: ParsedOperation, hasId: boolean, hasPayload: boolean) {
+function buildServiceCall(
+  operation: ParsedOperation,
+  hasId: boolean,
+  hasPayload: boolean,
+) {
   const label = operation.label.toLowerCase();
 
   if (label === 'create') {
@@ -793,7 +919,10 @@ function buildServiceCall(operation: ParsedOperation, hasId: boolean, hasPayload
 function buildDto(entity: ParsedEntity, mode: 'Create' | 'Update') {
   const fields = entity.fields
     .filter((field) => !field.isPrimaryKey)
-    .map((field) => `  ${field.name}${mode === 'Update' || !field.isNotNull ? '?' : ''}: ${toTypeScriptType(field.type)};`)
+    .map(
+      (field) =>
+        `  ${field.name}${mode === 'Update' || !field.isNotNull ? '?' : ''}: ${toTypeScriptType(field.type)};`,
+    )
     .join('\n');
 
   return `export class ${mode}${toPascalCase(entity.name)}Dto {

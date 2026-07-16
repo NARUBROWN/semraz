@@ -22,6 +22,20 @@ describe('OpenAiJsonClient', () => {
 
     expect(client.timeoutMs).toBe(180_000);
     expect(client.maxRetries).toBe(2);
+    expect(client.codeGenerationModel()).toBe('gpt-5-codex');
+  });
+
+  it('uses OPENAI_CODE_MODEL independently from the general-purpose model', () => {
+    const config = {
+      get: jest.fn((key: string) => {
+        if (key === 'OPENAI_MODEL') return 'gpt-4o-mini';
+        if (key === 'OPENAI_CODE_MODEL') return 'gpt-5-codex';
+        return undefined;
+      }),
+    };
+    const client = new OpenAiJsonClient(config as never, {} as never);
+
+    expect(client.codeGenerationModel()).toBe('gpt-5-codex');
   });
 
   it('always includes the literal json requirement in the Responses input', async () => {

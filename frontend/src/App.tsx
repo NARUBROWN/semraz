@@ -110,8 +110,65 @@ type DraftProject = {
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000';
 const aiWizardTimeoutMs = 60000;
+const crossStageAiWizardTimeoutMs = 180000;
 const accessTokenStorageKey = 'semraz-access-token';
 const refreshTokenStorageKey = 'semraz-refresh-token';
+
+type DesignIssue = {
+  code: string;
+  severity?: 'error' | 'warning';
+  location: string;
+  message: string;
+  suggestion: string;
+};
+
+type StructuredApiFailure = {
+  message: string;
+  issues: DesignIssue[];
+  draft?: Record<string, unknown>;
+};
+
+async function readStructuredApiFailure(
+  response: Response,
+  fallback: string,
+): Promise<StructuredApiFailure> {
+  try {
+    const payload = (await response.json()) as {
+      message?: string | string[];
+      issues?: Partial<DesignIssue>[];
+      draft?: Record<string, unknown>;
+    };
+    const message = Array.isArray(payload.message)
+      ? payload.message.join(' ')
+      : payload.message;
+    const issues = (payload.issues ?? [])
+      .filter(
+        (issue): issue is DesignIssue =>
+          typeof issue.code === 'string' &&
+          typeof issue.location === 'string' &&
+          typeof issue.message === 'string' &&
+          typeof issue.suggestion === 'string',
+      )
+      .map((issue) => ({ ...issue }));
+
+    return {
+      message: message || fallback,
+      issues,
+      ...(payload.draft ? { draft: payload.draft } : {}),
+    };
+  } catch {
+    return { message: fallback, issues: [] };
+  }
+}
+
+async function readStructuredApiError(response: Response, fallback: string) {
+  const failure = await readStructuredApiFailure(response, fallback);
+  const issueSummary = failure.issues
+    .slice(0, 3)
+    .map((issue) => issue.message || issue.code)
+    .join(' ');
+  return [failure.message, issueSummary].filter(Boolean).join(' ');
+}
 
 type Language = 'en' | 'ko';
 type TranslationValues = Record<string, string | number>;
@@ -210,6 +267,8 @@ Generate a reliable backend from a reviewed Semraz spec.
     'flow.back': 'Back',
     'flow.finish': 'Finish project',
     'flow.next': 'Next',
+    'flow.resolveWarnings':
+      'Resolve the validation issues and run validation again.',
     'flow.warnLossTitle': 'Go back?',
     'flow.warnLossBody':
       'Changes in the current and later steps will be cleared if you go back.',
@@ -220,6 +279,12 @@ Generate a reliable backend from a reviewed Semraz spec.
     'ai.tryWizard': 'Try the AI wizard',
     'ai.apply': 'Create AI draft',
     'ai.applying': 'Designing...',
+    'ai.repair': 'Repair from this draft',
+    'ai.repairing': 'Repairing...',
+    'ai.repairHint':
+      'The rejected draft is shown below. Edit the highlighted items directly or repair it using the draft and validation log.',
+    'ai.erdValidationFailed': 'This ERD draft needs a few corrections.',
+    'ai.operationsValidationFailed': 'This API draft needs a few corrections.',
     'ai.failed': 'AI provider request failed.',
     'ai.timeout': 'AI provider request took too long. Please try again.',
     'ai.projectTitle': 'Project idea assistant',
@@ -301,6 +366,15 @@ Generate a reliable backend from a reviewed Semraz spec.
     'erd.none': 'None',
     'erd.pkWarnings': 'PK warnings: {value}',
     'erd.noWarnings': 'none',
+    'erd.validationIssues': 'Validation issues',
+    'erd.issueCount': '{count} issues need attention',
+    'erd.issueFocus': 'Show in ERD',
+    'erd.issueLocation': 'Affected: {value}',
+    'erd.revalidate': 'Validate edits',
+    'erd.pendingValidationTitle': 'The ERD has changed',
+    'erd.pendingValidationBody':
+      'Previous issue locations are no longer shown because the structure changed. Validate the current ERD to refresh the results.',
+    'erd.noIssueTarget': 'Review the project and planning contract.',
     'erd.relations': 'Relations',
     'erd.noRelations': 'No relations yet.',
     'erd.unknown': 'Unknown',
@@ -568,19 +642,28 @@ Generate a reliable backend from a reviewed Semraz spec.
     'flow.back': '뒤로',
     'flow.finish': '프로젝트 완료',
     'flow.next': '다음',
+    'flow.resolveWarnings':
+      '검증 오류를 해결한 다음 수정 내용을 다시 검증해 주세요.',
     'flow.warnLossTitle': '이전 단계로 돌아가시겠습니까?',
     'flow.warnLossBody':
       '현재 단계와 이후 단계에서 작성한 내용이 초기화됩니다.',
     'flow.warnLossConfirm': '돌아가기',
     'flow.warnLossCancel': '머무르기',
-    'ai.open': 'AI 마법사',
-    'ai.close': 'AI 마법사 숨기기',
-    'ai.tryWizard': 'AI 마법사를 사용해보세요',
+    'ai.open': 'AI 설계 도우미',
+    'ai.close': 'AI 설계 도우미 닫기',
+    'ai.tryWizard': 'AI 설계 도우미',
     'ai.apply': 'AI 초안 만들기',
     'ai.applying': '설계 중...',
-    'ai.failed': 'AI Provider 요청에 실패했습니다.',
+    'ai.repair': '현재 초안 자동 수정',
+    'ai.repairing': '초안을 수정하는 중...',
+    'ai.repairHint':
+      '생성된 초안을 아래 ERD에 그대로 표시했습니다. 강조된 항목을 직접 고치거나, 현재 초안과 검증 결과를 바탕으로 AI가 자동 수정하게 할 수 있습니다.',
+    'ai.erdValidationFailed': 'ERD 초안에서 수정이 필요한 항목을 발견했습니다.',
+    'ai.operationsValidationFailed':
+      'API 초안에서 수정이 필요한 항목을 발견했습니다.',
+    'ai.failed': 'AI 서비스 요청에 실패했습니다.',
     'ai.timeout':
-      'AI Provider 요청 시간이 너무 오래 걸렸습니다. 다시 시도해주세요.',
+      'AI 서비스의 응답이 지연되고 있습니다. 잠시 후 다시 시도해 주세요.',
     'ai.projectTitle': '프로젝트 아이디어 보조',
     'ai.projectCopy':
       '백엔드 프로젝트의 첫 아이디어, 설명, 데이터베이스 선택을 구체적인 초안으로 만듭니다.',
@@ -658,6 +741,15 @@ Generate a reliable backend from a reviewed Semraz spec.
     'erd.none': '없음',
     'erd.pkWarnings': 'PK 경고: {value}',
     'erd.noWarnings': '없음',
+    'erd.validationIssues': '설계 검증 결과',
+    'erd.issueCount': '수정이 필요한 항목 {count}개',
+    'erd.issueFocus': '문제 위치로 이동',
+    'erd.issueLocation': '문제 위치: {value}',
+    'erd.revalidate': '수정 내용 다시 검증',
+    'erd.pendingValidationTitle': 'ERD 수정 내용 확인이 필요합니다',
+    'erd.pendingValidationBody':
+      '구조가 변경되어 이전 경고 위치는 더 이상 표시하지 않습니다. 현재 ERD를 다시 검증하면 최신 결과로 갱신됩니다.',
+    'erd.noIssueTarget': '프로젝트 및 계획 계약을 확인하세요.',
     'erd.relations': '관계',
     'erd.noRelations': '아직 관계가 없습니다.',
     'erd.unknown': '알 수 없음',
@@ -3174,6 +3266,13 @@ type CreateFlowProps = {
   ) => Promise<void>;
 };
 
+type FailedAiAttempt = {
+  step: 'erd' | 'operations';
+  message: string;
+  issues: DesignIssue[];
+  draft: Record<string, unknown>;
+};
+
 function CreateFlow({
   workspaceId,
   initialWorkspace,
@@ -3222,6 +3321,10 @@ function CreateFlow({
   const [isAiWizardOpen, setIsAiWizardOpen] = useState(false);
   const [isAiApplying, setIsAiApplying] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
+  const [designIssues, setDesignIssues] = useState<DesignIssue[]>([]);
+  const [isDesignDirty, setIsDesignDirty] = useState(false);
+  const [failedAiAttempt, setFailedAiAttempt] =
+    useState<FailedAiAttempt | null>(null);
   const [isSavingWorkspace, setIsSavingWorkspace] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [pendingStepBack, setPendingStepBack] = useState<number | null>(null);
@@ -3253,6 +3356,20 @@ function CreateFlow({
   }
 
   const isCurrentStepComplete = isStepComplete(flowStep);
+  const hasDesignIssues = designIssues.length > 0 || isDesignDirty;
+
+  function friendlyDesignFailure(
+    step: 'project' | 'planning' | 'erd' | 'operations',
+    failure: StructuredApiFailure,
+  ): StructuredApiFailure {
+    if (step === 'erd') {
+      return { ...failure, message: t('ai.erdValidationFailed') };
+    }
+    if (step === 'operations') {
+      return { ...failure, message: t('ai.operationsValidationFailed') };
+    }
+    return failure;
+  }
 
   function requestGoBack(targetStep: number) {
     if (targetStep < flowStep) {
@@ -3304,6 +3421,7 @@ function CreateFlow({
       }
       setAiError(null);
       setIsAiWizardOpen(false);
+      setIsDesignDirty(false);
 
       if (workspaceId) {
         void onPersist(workspaceId, {
@@ -3467,11 +3585,14 @@ function CreateFlow({
 
     setIsAiApplying(true);
     setAiError(null);
+    setDesignIssues([]);
+    setIsDesignDirty(false);
+    setFailedAiAttempt(null);
 
     const abortController = new AbortController();
     const timeoutId = window.setTimeout(
       () => abortController.abort(),
-      aiWizardTimeoutMs,
+      step === 'project' ? aiWizardTimeoutMs : crossStageAiWizardTimeoutMs,
     );
 
     try {
@@ -3497,7 +3618,12 @@ function CreateFlow({
       });
 
       if (!response.ok) {
-        throw new Error(t('ai.failed'));
+        const failure = friendlyDesignFailure(
+          step,
+          await readStructuredApiFailure(response, t('ai.failed')),
+        );
+        retainFailedDesignDraft(step, failure);
+        throw new Error(failure.message);
       }
 
       const result = (await response.json()) as {
@@ -3541,6 +3667,144 @@ function CreateFlow({
       if (step === 'operations' && result.operations?.length) {
         setOperations(normalizeAiOperations(result.operations, entities));
       }
+      setDesignIssues([]);
+      setIsDesignDirty(false);
+      setFailedAiAttempt(null);
+    } catch (error) {
+      setAiError(
+        error instanceof Error && error.name === 'AbortError'
+          ? t('ai.timeout')
+          : error instanceof Error
+            ? error.message
+            : t('ai.failed'),
+      );
+    } finally {
+      window.clearTimeout(timeoutId);
+      setIsAiApplying(false);
+    }
+  }
+
+  function retainFailedDesignDraft(
+    step: 'project' | 'planning' | 'erd' | 'operations',
+    failure: StructuredApiFailure,
+  ) {
+    if (step === 'erd') {
+      setIsAiWizardOpen(true);
+      const rawEntities = Array.isArray(failure.draft?.entities)
+        ? (failure.draft.entities as ErdEntity[])
+        : [];
+      const rawRelations = Array.isArray(failure.draft?.relations)
+        ? (failure.draft.relations as ErdRelation[])
+        : [];
+      const nextErd = normalizeAiErdDraft(rawEntities, rawRelations);
+      const normalizedDraftChanged =
+        rawEntities.length !== nextErd.entities.length ||
+        rawRelations.length !== nextErd.relations.length;
+
+      // Validation locations belong to the exact rejected draft. Normalizing
+      // that draft can remove invalid/duplicate relations and shift every
+      // following relations[n] location, so never display the old locations
+      // against the normalized ERD.
+      setDesignIssues(normalizedDraftChanged ? [] : failure.issues);
+      setIsDesignDirty(normalizedDraftChanged);
+
+      if (nextErd.entities.length > 0) {
+        setEntities(nextErd.entities);
+        setRelations(nextErd.relations);
+        setOperations(createDefaultOperations(nextErd.entities, t));
+      }
+      setFailedAiAttempt({
+        step,
+        message: failure.message,
+        issues: failure.issues,
+        draft: failure.draft ?? {
+          entities: nextErd.entities,
+          relations: nextErd.relations,
+        },
+      });
+    }
+
+    if (step === 'operations') {
+      setDesignIssues(failure.issues);
+      setIsDesignDirty(false);
+      setIsAiWizardOpen(true);
+      const rawOperations = Array.isArray(failure.draft?.operations)
+        ? (failure.draft.operations as BackendOperation[])
+        : [];
+
+      if (rawOperations.length > 0) {
+        setOperations(normalizeAiOperations(rawOperations, entities));
+      }
+      setFailedAiAttempt({
+        step,
+        message: failure.message,
+        issues: failure.issues,
+        draft: failure.draft ?? { operations: rawOperations },
+      });
+    }
+  }
+
+  async function repairAiDraft() {
+    if (!failedAiAttempt) return;
+
+    setIsAiApplying(true);
+    setAiError(null);
+    const abortController = new AbortController();
+    const timeoutId = window.setTimeout(
+      () => abortController.abort(),
+      crossStageAiWizardTimeoutMs,
+    );
+
+    try {
+      const draft =
+        failedAiAttempt.step === 'erd'
+          ? { entities, relations }
+          : { operations };
+      const response = await authFetch(`${apiBaseUrl}/api/ai/repair`, {
+        method: 'POST',
+        signal: abortController.signal,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          step: failedAiAttempt.step,
+          language,
+          project: draftProject,
+          entities,
+          relations,
+          operations,
+          draft,
+        }),
+      });
+
+      if (!response.ok) {
+        const failure = friendlyDesignFailure(
+          failedAiAttempt.step,
+          await readStructuredApiFailure(response, t('ai.failed')),
+        );
+        retainFailedDesignDraft(failedAiAttempt.step, failure);
+        throw new Error(failure.message);
+      }
+
+      const result = (await response.json()) as {
+        entities?: ErdEntity[];
+        relations?: ErdRelation[];
+        operations?: BackendOperation[];
+      };
+
+      if (failedAiAttempt.step === 'erd' && result.entities?.length) {
+        const nextErd = normalizeAiErdDraft(
+          result.entities,
+          result.relations ?? [],
+        );
+        setEntities(nextErd.entities);
+        setRelations(nextErd.relations);
+        setOperations(createDefaultOperations(nextErd.entities, t));
+      }
+      if (failedAiAttempt.step === 'operations' && result.operations?.length) {
+        setOperations(normalizeAiOperations(result.operations, entities));
+      }
+      setDesignIssues([]);
+      setIsDesignDirty(false);
+      setFailedAiAttempt(null);
     } catch (error) {
       setAiError(
         error instanceof Error && error.name === 'AbortError'
@@ -3603,16 +3867,87 @@ function CreateFlow({
     });
   }
 
-  async function handleNext() {
-    if (workspaceId || flowStep !== 0) {
-      onNext();
-      return;
+  async function validateCurrentDesignTransition() {
+    const step =
+      flowStep === 0
+        ? 'project'
+        : flowStep === 1
+          ? 'planning'
+          : flowStep === 2
+            ? 'erd'
+            : 'operations';
+    const response = await authFetch(
+      `${apiBaseUrl}/api/ai/validate-transition`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          step,
+          language,
+          project: draftProject,
+          entities,
+          relations,
+          operations,
+        }),
+      },
+    );
+    if (!response.ok) {
+      const failure = friendlyDesignFailure(
+        step,
+        await readStructuredApiFailure(response, t('error.workspaceFailed')),
+      );
+      retainFailedDesignDraft(step, failure);
+      throw new Error(failure.message);
     }
+    setDesignIssues([]);
+    setIsDesignDirty(false);
+    setFailedAiAttempt(null);
+  }
 
+  function markErdEdited() {
+    if (designIssues.length > 0 || failedAiAttempt?.step === 'erd') {
+      setIsDesignDirty(true);
+      setSaveError(null);
+    }
+  }
+
+  function handleErdEntitiesChange(nextEntities: ErdEntity[]) {
+    markErdEdited();
+    setEntities(nextEntities);
+  }
+
+  function handleErdRelationsChange(nextRelations: ErdRelation[]) {
+    markErdEdited();
+    setRelations(nextRelations);
+  }
+
+  async function revalidateCurrentDesign() {
+    setIsSavingWorkspace(true);
+    setSaveError(null);
+    try {
+      await validateCurrentDesignTransition();
+    } catch (error) {
+      setSaveError(
+        error instanceof Error ? error.message : t('error.workspaceFailed'),
+      );
+    } finally {
+      setIsSavingWorkspace(false);
+    }
+  }
+
+  async function handleNext() {
     setIsSavingWorkspace(true);
     setSaveError(null);
 
     try {
+      if (flowStep < 4) {
+        await validateCurrentDesignTransition();
+      }
+      if (workspaceId || flowStep !== 0) {
+        onNext();
+        return;
+      }
+
       const nextStep = 1;
       await onCreateWorkspace(
         createWorkspaceSnapshotPayload(draftProject, nextStep, {
@@ -3681,7 +4016,6 @@ function CreateFlow({
             <p>{aiWizardCopy()}</p>
           </div>
           <div className="ai-wizard-actions">
-            {aiError ? <p className="form-error">{aiError}</p> : null}
             <button
               type="button"
               disabled={isAiApplying}
@@ -3690,6 +4024,24 @@ function CreateFlow({
               {isAiApplying ? t('ai.applying') : t('ai.apply')}
             </button>
           </div>
+          {aiError || failedAiAttempt ? (
+            <div className="ai-wizard-error-card" role="alert">
+              <div>
+                <strong>{aiError ?? failedAiAttempt?.message}</strong>
+                {failedAiAttempt ? <p>{t('ai.repairHint')}</p> : null}
+              </div>
+              {failedAiAttempt ? (
+                <button
+                  className="ai-repair-button"
+                  type="button"
+                  disabled={isAiApplying}
+                  onClick={repairAiDraft}
+                >
+                  {isAiApplying ? t('ai.repairing') : t('ai.repair')}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
         </section>
       ) : null}
 
@@ -3709,9 +4061,13 @@ function CreateFlow({
         {flowStep === 2 ? (
           <ErdStep
             entities={entities}
+            isDirty={isDesignDirty}
+            issues={isDesignDirty ? [] : designIssues}
+            isValidating={isSavingWorkspace}
             relations={relations}
-            onChangeEntities={setEntities}
-            onChangeRelations={setRelations}
+            onChangeEntities={handleErdEntitiesChange}
+            onChangeRelations={handleErdRelationsChange}
+            onValidate={revalidateCurrentDesign}
           />
         ) : null}
         {flowStep === 3 ? (
@@ -3760,10 +4116,15 @@ function CreateFlow({
           {flowStep === 0 ? t('flow.cancel') : t('flow.back')}
         </button>
         <div className="flow-action-primary">
+          {hasDesignIssues ? (
+            <p className="form-error">{t('flow.resolveWarnings')}</p>
+          ) : null}
           {saveError ? <p className="form-error">{saveError}</p> : null}
           <button
             type="button"
-            disabled={isSavingWorkspace || !isCurrentStepComplete}
+            disabled={
+              isSavingWorkspace || !isCurrentStepComplete || hasDesignIssues
+            }
             onClick={isLastStep ? finishProject : handleNext}
           >
             {isSavingWorkspace
@@ -4229,7 +4590,7 @@ function normalizeAiEntities(aiEntities: ErdEntity[]): ErdEntity[] {
           field.name || (fieldIndex === 0 ? 'id' : `field${fieldIndex + 1}`);
 
         return {
-          id: normalizeId(field.id || `${entityId}_${fieldName}`),
+          id: normalizeId(`${entityId}_${fieldName}`),
           name: fieldName,
           type: fieldTypes.includes(field.type) ? field.type : 'string',
           isPrimaryKey: Boolean(field.isPrimaryKey || fieldName === 'id'),
@@ -4357,7 +4718,9 @@ function normalizeAiErdDraft(
       relation.sourceCardinality === 'N' ? 'N' : '1';
     const targetCardinality: Cardinality =
       relation.targetCardinality === '1' ? '1' : 'N';
-    const relationKey = `${sourceId}:${targetId}:${sourceCardinality}:${targetCardinality}`;
+    // Direction/cardinality reversals still describe the same entity pair.
+    // Keep one relation so FK inference cannot recreate a duplicate.
+    const relationKey = [sourceId, targetId].sort().join(':');
 
     if (relationKeys.has(relationKey)) {
       return validRelations;
@@ -4609,18 +4972,195 @@ function toPascalLabel(value: string) {
     .join('');
 }
 
+type TargetedDesignIssue = {
+  issue: DesignIssue;
+  entityId?: string;
+  fieldId?: string;
+  relationId?: string;
+  relatedEntityIds?: string[];
+  displayMessage: string;
+  displaySuggestion: string;
+  locationLabel: string;
+};
+
+function targetDesignIssues(
+  issues: DesignIssue[],
+  entities: ErdEntity[],
+  relations: ErdRelation[],
+  language: Language,
+): TargetedDesignIssue[] {
+  return issues.map((issue) => {
+    let entity: ErdEntity | undefined;
+    let field: ErdField | undefined;
+    let relation: ErdRelation | undefined;
+    const entityMatch = issue.location.match(
+      /entities\[(\d+)\](?:\.fields\[(\d+)\])?/,
+    );
+    if (entityMatch) {
+      entity = entities[Number(entityMatch[1])];
+      field = entity?.fields[Number(entityMatch[2])];
+    }
+
+    const relationMatch = issue.location.match(/relations\[(\d+)\]/);
+    if (relationMatch) {
+      relation = relations[Number(relationMatch[1])];
+      entity = relation
+        ? entities.find(
+            (candidate) =>
+              candidate.id ===
+              (relation?.foreignKeyOwnerId ?? relation?.sourceId),
+          )
+        : undefined;
+      field = entity?.fields.find(
+        (candidate) => candidate.name === relation?.foreignKeyFieldName,
+      );
+    }
+
+    const source = relation
+      ? entities.find((candidate) => candidate.id === relation?.sourceId)
+      : undefined;
+    const target = relation
+      ? entities.find((candidate) => candidate.id === relation?.targetId)
+      : undefined;
+    const localized = localizeDesignIssue(
+      issue,
+      language,
+      entity,
+      field,
+      source,
+      target,
+    );
+
+    return {
+      issue,
+      ...(entity ? { entityId: entity.id } : {}),
+      ...(field ? { fieldId: field.id } : {}),
+      ...(relation
+        ? {
+            relationId: relation.id,
+            relatedEntityIds: [relation.sourceId, relation.targetId],
+          }
+        : {}),
+      ...localized,
+    };
+  });
+}
+
+function localizeDesignIssue(
+  issue: DesignIssue,
+  language: Language,
+  entity?: ErdEntity,
+  field?: ErdField,
+  source?: ErdEntity,
+  target?: ErdEntity,
+) {
+  const entityName = entity?.name || '엔티티';
+  const fieldName = field?.name;
+  const relationName =
+    source && target ? `${source.name} ↔ ${target.name}` : issue.location;
+  const locationLabel = fieldName
+    ? `${entityName}.${fieldName}`
+    : source && target
+      ? relationName
+      : entity?.name || issue.location;
+
+  if (language !== 'ko') {
+    return {
+      displayMessage: issue.message,
+      displaySuggestion: issue.suggestion,
+      locationLabel,
+    };
+  }
+
+  const localizedByCode: Record<
+    string,
+    { displayMessage: string; displaySuggestion: string }
+  > = {
+    DUPLICATE_RELATION: {
+      displayMessage: `${relationName} 관계가 중복되었습니다.`,
+      displaySuggestion:
+        '두 엔티티 사이에는 관계 하나와 외래 키 소유 컬럼 하나만 남겨 주세요.',
+    },
+    RELATION_FOREIGN_KEY_MISSING: {
+      displayMessage: `${relationName} 관계에 유효한 외래 키 컬럼이 없습니다.`,
+      displaySuggestion:
+        '관계를 소유할 엔티티와 UUID 외래 키 컬럼을 지정해 주세요.',
+    },
+    RELATION_FOREIGN_KEY_MISMATCH: {
+      displayMessage: `${locationLabel} 외래 키 설정이 관계와 일치하지 않습니다.`,
+      displaySuggestion:
+        '컬럼 타입, 참조 엔티티, 관계의 외래 키 소유자를 일치시켜 주세요.',
+    },
+    AMBIGUOUS_FOREIGN_KEY_NAME: {
+      displayMessage: `${locationLabel} 외래 키가 어떤 엔티티를 참조하는지 이름만으로 알 수 없습니다.`,
+      displaySuggestion:
+        '참조 대상 엔티티 이름을 사용한 구체적인 컬럼명으로 변경해 주세요. 예: inspectionScheduleId',
+    },
+    ORPHAN_FOREIGN_KEY: {
+      displayMessage: `${locationLabel}에 대응하는 관계가 없습니다.`,
+      displaySuggestion:
+        '참조 엔티티와 관계를 추가하거나 해당 컬럼의 FK 설정을 해제해 주세요.',
+    },
+    INVALID_PRIMARY_KEY_COUNT: {
+      displayMessage: `${entityName}의 기본 키는 정확히 하나여야 합니다.`,
+      displaySuggestion: 'UUID 타입의 id 컬럼 하나만 기본 키로 지정해 주세요.',
+    },
+    INVALID_PRIMARY_KEY_SHAPE: {
+      displayMessage: `${entityName}의 기본 키는 id: uuid 형식이어야 합니다.`,
+      displaySuggestion:
+        '기본 키 컬럼 이름을 id로, 타입을 uuid로 변경해 주세요.',
+    },
+    DUPLICATE_ENTITY_FIELD: {
+      displayMessage: `${locationLabel} 컬럼이 중복되었습니다.`,
+      displaySuggestion: '같은 이름의 컬럼은 하나만 남겨 주세요.',
+    },
+    DUPLICATE_FIELD_ID: {
+      displayMessage: `${locationLabel}의 내부 식별자가 다른 컬럼과 중복되었습니다.`,
+      displaySuggestion: 'AI 자동 수정을 실행해 컬럼 식별자를 정리해 주세요.',
+    },
+    DUPLICATE_ENTITY_ID: {
+      displayMessage: `${entityName}의 내부 식별자가 다른 엔티티와 중복되었습니다.`,
+      displaySuggestion: 'AI 자동 수정을 실행해 엔티티 식별자를 정리해 주세요.',
+    },
+    DUPLICATE_ENTITY_NAME: {
+      displayMessage: `${entityName} 엔티티 이름이 중복되었습니다.`,
+      displaySuggestion: '각 엔티티에 서로 다른 이름을 사용해 주세요.',
+    },
+    INVALID_RELATION_ENDPOINT: {
+      displayMessage: '관계의 시작 또는 대상 엔티티가 올바르지 않습니다.',
+      displaySuggestion: '서로 다른 기존 엔티티 두 개를 다시 연결해 주세요.',
+    },
+  };
+
+  return {
+    ...(localizedByCode[issue.code] ?? {
+      displayMessage: issue.message,
+      displaySuggestion: issue.suggestion,
+    }),
+    locationLabel,
+  };
+}
+
 function ErdStep({
   entities,
+  isDirty,
+  issues,
+  isValidating,
   relations,
   onChangeEntities,
   onChangeRelations,
+  onValidate,
 }: {
   entities: ErdEntity[];
+  isDirty: boolean;
+  issues: DesignIssue[];
+  isValidating: boolean;
   relations: ErdRelation[];
   onChangeEntities: (entities: ErdEntity[]) => void;
   onChangeRelations: (relations: ErdRelation[]) => void;
+  onValidate: () => void;
 }) {
-  const { t } = useI18n();
+  const { language, t } = useI18n();
   const canvasRef = useRef<HTMLElement | null>(null);
   const dragStateRef = useRef<{
     entityId: string;
@@ -4640,6 +5180,7 @@ function ErdStep({
   const [selectedEntityId, setSelectedEntityId] = useState(
     entities[0]?.id ?? '',
   );
+  const [showRelationBuilder, setShowRelationBuilder] = useState(false);
   const [relationDraft, setRelationDraft] = useState<{
     sourceCardinality: Cardinality;
     direction: RelationDirection;
@@ -4649,6 +5190,10 @@ function ErdStep({
     direction: 'two-way',
     targetIds: [],
   });
+  const targetedIssues = useMemo(
+    () => targetDesignIssues(issues, entities, relations, language),
+    [entities, issues, language, relations],
+  );
 
   function setEntities(
     nextEntities: ErdEntity[] | ((currentEntities: ErdEntity[]) => ErdEntity[]),
@@ -4705,6 +5250,15 @@ function ErdStep({
         top: `${Math.max(96, selectedEntityPosition?.y ?? 0)}px`,
       }
     : undefined;
+
+  useEffect(() => {
+    if (
+      entities.length > 0 &&
+      !entities.some((entity) => entity.id === selectedEntityId)
+    ) {
+      setSelectedEntityId(entities[0].id);
+    }
+  }, [entities, selectedEntityId]);
 
   useEffect(() => {
     function handleWindowMouseMove(event: MouseEvent) {
@@ -4766,6 +5320,7 @@ function ErdStep({
       },
     ]);
     setSelectedEntityId(id);
+    setShowRelationBuilder(true);
     setRelationDraft((currentDraft) => ({ ...currentDraft, targetIds: [] }));
   }
 
@@ -4818,6 +5373,68 @@ function ErdStep({
     setCanvasPan({ x: 0, y: 0 });
   }
 
+  function focusIssue(target: TargetedDesignIssue) {
+    const canvas = canvasRef.current;
+    const entityIds = target.relatedEntityIds?.length
+      ? target.relatedEntityIds
+      : target.entityId
+        ? [target.entityId]
+        : [];
+    const focusEntities = entityIds
+      .map((entityId) =>
+        entities.find((candidate) => candidate.id === entityId),
+      )
+      .filter((entity): entity is ErdEntity => Boolean(entity));
+
+    if (focusEntities.length === 0 || !canvas) return;
+    const renderedNodes = Array.from(
+      canvas.querySelectorAll<HTMLElement>('[data-entity-id]'),
+    );
+    const bounds = focusEntities.map((entity) => {
+      const node = renderedNodes.find(
+        (candidate) => candidate.dataset.entityId === entity.id,
+      );
+      const rect = node?.getBoundingClientRect();
+      return {
+        left: entity.x,
+        top: entity.y,
+        right: entity.x + (rect ? rect.width / canvasZoom : erdEntityWidth),
+        bottom:
+          entity.y +
+          (rect
+            ? rect.height / canvasZoom
+            : estimateEntityHeight(entity.fields.length)),
+      };
+    });
+    const left = Math.min(...bounds.map((bound) => bound.left));
+    const top = Math.min(...bounds.map((bound) => bound.top));
+    const right = Math.max(...bounds.map((bound) => bound.right));
+    const bottom = Math.max(...bounds.map((bound) => bound.bottom));
+    const boundsWidth = Math.max(erdEntityWidth, right - left);
+    const boundsHeight = Math.max(180, bottom - top);
+    const fitZoom = clampZoom(
+      Math.min(
+        1.1,
+        Math.max(320, canvas.clientWidth - 96) / boundsWidth,
+        Math.max(260, canvas.clientHeight - 140) / boundsHeight,
+      ),
+    );
+    const zoom = Math.min(Math.max(canvasZoom, 0.8), fitZoom);
+
+    if (target.entityId) setSelectedEntityId(target.entityId);
+    setShowRelationBuilder(false);
+    setCanvasZoom(zoom);
+    setCanvasPan({
+      x: canvas.clientWidth / 2 - ((left + right) / 2) * zoom,
+      y: canvas.clientHeight / 2 - ((top + bottom) / 2) * zoom,
+    });
+  }
+
+  function selectEntity(entityId: string) {
+    setSelectedEntityId(entityId);
+    setShowRelationBuilder(true);
+  }
+
   function getEntityWorldPosition(entity: ErdEntity) {
     return {
       x: entity.x,
@@ -4867,6 +5484,7 @@ function ErdStep({
       offsetY: pointer.y - entityPosition.y,
     };
     setSelectedEntityId(entityId);
+    setShowRelationBuilder(true);
   }
 
   function handleEntityDragStart(
@@ -4974,7 +5592,7 @@ function ErdStep({
       ),
     );
 
-    if (field?.isForeignKey) {
+    if (field) {
       setRelations((currentRelations) =>
         currentRelations.filter(
           (relation) =>
@@ -5173,6 +5791,7 @@ function ErdStep({
     }
 
     setSelectedEntityId('');
+    setShowRelationBuilder(false);
     setRelationDraft((currentDraft) => ({ ...currentDraft, targetIds: [] }));
   }
 
@@ -5296,7 +5915,7 @@ function ErdStep({
             transform: `translate(${canvasPan.x}px, ${canvasPan.y}px) scale(${canvasZoom})`,
           }}
         >
-          {selectedEntity ? (
+          {selectedEntity && showRelationBuilder ? (
             <div
               className="relation-builder floating"
               style={relationBuilderStyle}
@@ -5442,6 +6061,9 @@ function ErdStep({
             <EntityNode
               key={entity.id}
               entity={entity}
+              issues={targetedIssues.filter(
+                (target) => target.entityId === entity.id,
+              )}
               position={getEntityWorldPosition(entity)}
               isSelected={entity.id === selectedEntityId}
               onAddField={addField}
@@ -5450,7 +6072,7 @@ function ErdStep({
               onDrag={handleEntityDrag}
               onDragEnd={handleEntityDragEnd}
               onDragStart={handleEntityDragStart}
-              onSelect={setSelectedEntityId}
+              onSelect={selectEntity}
               onUpdateEntity={updateEntity}
               onUpdateField={updateField}
             />
@@ -5458,6 +6080,59 @@ function ErdStep({
         </div>
       </section>
       <section className="flow-panel">
+        {isDirty || issues.length > 0 ? (
+          <div className="erd-issue-panel" role="alert">
+            <div className="erd-issue-panel-header">
+              <div>
+                <h3>
+                  {isDirty
+                    ? t('erd.pendingValidationTitle')
+                    : t('erd.validationIssues')}
+                </h3>
+                {!isDirty ? (
+                  <span>{t('erd.issueCount', { count: issues.length })}</span>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                disabled={isValidating}
+                onClick={onValidate}
+              >
+                {t('erd.revalidate')}
+              </button>
+            </div>
+            {isDirty ? (
+              <p className="erd-validation-pending-copy">
+                {t('erd.pendingValidationBody')}
+              </p>
+            ) : (
+              <div className="erd-issue-list">
+                {targetedIssues.map((target, index) => (
+                  <article
+                    key={`${target.issue.code}-${target.issue.location}-${index}`}
+                  >
+                    <div>
+                      <strong>{target.displayMessage}</strong>
+                      <span className="erd-issue-location">
+                        {t('erd.issueLocation', {
+                          value: target.locationLabel,
+                        })}
+                      </span>
+                      <p>{target.displaySuggestion}</p>
+                    </div>
+                    {target.entityId ? (
+                      <button type="button" onClick={() => focusIssue(target)}>
+                        {t('erd.issueFocus')}
+                      </button>
+                    ) : (
+                      <span>{t('erd.noIssueTarget')}</span>
+                    )}
+                  </article>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : null}
         <h3>{t('erd.properties')}</h3>
         <div className="property-list">
           <span>{t('erd.entitiesCount', { count: entities.length })}</span>
@@ -5521,6 +6196,7 @@ function ErdStep({
 
 function EntityNode({
   entity,
+  issues,
   position,
   isSelected,
   onAddField,
@@ -5534,6 +6210,7 @@ function EntityNode({
   onUpdateField,
 }: {
   entity: ErdEntity;
+  issues: TargetedDesignIssue[];
   position: { x: number; y: number };
   isSelected: boolean;
   onAddField: (entityId: string) => void;
@@ -5551,11 +6228,27 @@ function EntityNode({
   ) => void;
 }) {
   const { t } = useI18n();
+  const fieldIssueIds = new Set(
+    issues.map((target) => target.fieldId).filter(Boolean),
+  );
+  const hasIssues = issues.length > 0;
 
   return (
     <div
-      className={isSelected ? 'entity-node selected' : 'entity-node'}
+      className={[
+        'entity-node',
+        isSelected ? 'selected' : '',
+        hasIssues ? 'has-warning' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
       style={{ left: `${position.x}px`, top: `${position.y}px` }}
+      data-entity-id={entity.id}
+      title={
+        hasIssues
+          ? issues.map((target) => target.displayMessage).join('\n')
+          : undefined
+      }
       onClick={() => onSelect(entity.id)}
     >
       <div
@@ -5580,6 +6273,14 @@ function EntityNode({
           onClick={(event) => event.stopPropagation()}
           onPointerDown={(event) => event.stopPropagation()}
         />
+        {hasIssues ? (
+          <span
+            className="entity-warning-badge"
+            aria-label={`${issues.length}`}
+          >
+            ! {issues.length}
+          </span>
+        ) : null}
         <button
           className="entity-delete-button"
           type="button"
@@ -5595,11 +6296,29 @@ function EntityNode({
       <div className="field-table">
         {entity.fields.map((field) => (
           <div
-            className="field-row"
+            className={
+              fieldIssueIds.has(field.id)
+                ? 'field-row has-warning'
+                : 'field-row'
+            }
             key={field.id}
+            aria-invalid={fieldIssueIds.has(field.id)}
+            title={
+              fieldIssueIds.has(field.id)
+                ? issues
+                    .filter((target) => target.fieldId === field.id)
+                    .map((target) => target.displayMessage)
+                    .join('\n')
+                : undefined
+            }
             onClick={(event) => event.stopPropagation()}
             onPointerDown={(event) => event.stopPropagation()}
           >
+            {fieldIssueIds.has(field.id) ? (
+              <span className="field-warning-marker" aria-hidden="true">
+                !
+              </span>
+            ) : null}
             <input
               aria-label={t('erd.columnName', {
                 entity: entity.name,
@@ -6420,7 +7139,9 @@ function GenerateStep({
       });
 
       if (!response.ok) {
-        throw new Error(t('error.workspaceFailed'));
+        throw new Error(
+          await readStructuredApiError(response, t('error.workspaceFailed')),
+        );
       }
 
       const workspaceData = (await response.json()) as GenerateWorkspace;
@@ -6532,11 +7253,18 @@ function GenerateStep({
 
     source.addEventListener('agent-error', (event) => {
       const payload = JSON.parse(event.data) as { message?: string };
-      setGenerateError(payload.message ?? t('error.agentUnexpected'));
-      setTerminalLines((currentLines) => [
-        ...currentLines.filter((line) => line.status !== 'running'),
-        makeTerminalLine('error', payload.message ?? t('error.agentFailed')),
-      ]);
+      const message = payload.message ?? t('error.agentFailed');
+      setGenerateError(message);
+      setTerminalLines((currentLines) => {
+        const settled = currentLines.filter(
+          (line) => line.status !== 'running',
+        );
+        return settled.some(
+          (line) => line.status === 'error' && line.text === message,
+        )
+          ? settled
+          : [...settled, makeTerminalLine('error', message)];
+      });
       onNestJsAppReadyChange(false);
       setIsRunningAgent(false);
       source.close();

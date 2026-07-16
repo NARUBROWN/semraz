@@ -1100,10 +1100,11 @@ describe('Generated application contract (e2e)', () => {
   testGenerationSystemPrompt(): string {
     return [
       `You are a precise NestJS testing agent that targets at least ${this.coverageTarget}% coverage and keeps tests faithful to the specification.`,
-      'Return JSON only with shape {"files":[...],"patches":[...]}.',
-      '- "files": entries {"path","content"} with the COMPLETE file content. Use ONLY for brand-new spec files or a complete replacement of a spec that failed in the immediately preceding run — never for application source.',
-      '- "patches": entries {"path","edits":[{"find","replace"}]} that edit an EXISTING file. "find" must be an exact, unique substring of the current file; "replace" is its replacement. Prefer patches — they leave passing tests untouched.',
-      'A patch may target only a *.spec.ts file. Never modify application source, configuration, or the managed test harness.',
+      'Return JSON only with shape {"classification":"BAD_TEST|CODE_DEFECT","diagnosis":"...","files":[...],"patches":[...],"applicationPatches":[...]}.',
+      '- "files": entries {"path","content"} with the COMPLETE file content. Use ONLY for brand-new spec files. Never replace an existing spec through "files" and never return application source.',
+      '- "patches": entries {"path","edits":[{"find","replace"}]} that edit an EXISTING *.spec.ts file. "find" must be an exact, unique substring of the current file; "replace" is its replacement.',
+      '- "applicationPatches": the same exact-edit shape, but only for existing src/*.ts application files. Return these ONLY with classification CODE_DEFECT, when the specification requires behavior missing from the application. Include every related service/module/entity edit required for a working NestJS implementation.',
+      'Never modify configuration or the managed test harness.',
       'When fixing a failure, emit the smallest patch that fixes it (e.g. a single edit adding a missing import). Do NOT resend a whole passing file.',
       'Generate complete Jest test files (in "files"), never snippets.',
     ].join('\n');
@@ -1115,6 +1116,7 @@ describe('Generated application contract (e2e)', () => {
     attempt: number;
     coverageGaps: CoverageGap[];
     patchFailures?: FilePatchFailure[];
+    targetFile?: string;
   }): string {
     const failureSummaries = params.context.previousFailures
       .map((failure) => failure.errorSummary?.trim())
@@ -1135,8 +1137,9 @@ describe('Generated application contract (e2e)', () => {
     const patchFailureSection =
       params.patchFailures && params.patchFailures.length > 0
         ? [
-            'Your previous patches did NOT apply and were skipped — for each, resend the fix (a patch with a unique "find", or the full file in "files"):',
+            'Your previous patch for THIS target did NOT apply and was skipped:',
             JSON.stringify(params.patchFailures, null, 2),
+            'Repair it with a NEW patch. For an ambiguous find, copy a longer exact substring including the surrounding describe/it block so it matches once. For a missing find, copy text only from the current spec file shown below. Never use application-source text as patch find text.',
             '',
           ]
         : [];
@@ -1155,13 +1158,47 @@ describe('Generated application contract (e2e)', () => {
       .map((file) => file.path)
       .filter((filePath) => /\.(controller|service)\.ts$/.test(filePath))
       .map((filePath) => filePath.replace(/\.ts$/, '.spec.ts'))
-      .filter((specPath) => !existingPaths.has(specPath));
+      .filter((specPath) => !existingPaths.has(specPath))
+      .filter(
+        (specPath) => !params.targetFile || specPath === params.targetFile,
+      );
+    const currentTarget = params.targetFile
+      ? params.context.relevantFiles.find(
+          (file) => file.path === params.targetFile,
+        )
+      : undefined;
+    const targetSourcePath = params.targetFile?.replace(/\.spec\.ts$/, '.ts');
+    const currentTargetSource = targetSourcePath
+      ? params.context.relevantFiles.find(
+          (file) => file.path === targetSourcePath,
+        )
+      : undefined;
 
     return [
+      ...(params.targetFile
+        ? [
+            '=== CURRENT SPEC TARGET ===',
+            params.targetFile,
+            currentTarget
+              ? 'This spec already exists. Return ONLY a minimal patch for it; a full-file replacement is forbidden.'
+              : 'This spec does not exist yet. Return it as one complete entry in "files".',
+            'Ignore failures and patch instructions for every other file.',
+            ...(currentTarget
+              ? ['=== CURRENT TARGET FILE CONTENT ===', currentTarget.content]
+              : []),
+            ...(currentTargetSource
+              ? [
+                  '=== CORRESPONDING APPLICATION SOURCE (READ ONLY) ===',
+                  currentTargetSource.content,
+                ]
+              : []),
+            '',
+          ]
+        : []),
       ...leadingFailureSection,
       ...patchFailureSection,
       'Create or repair tests for the generated NestJS app.',
-      'Prefer targeted "patches" to existing spec files. A complete "files" replacement is allowed ONLY for a spec that failed in the immediately preceding run, when removing or restructuring invalid tests is safer than a patch.',
+      'Prefer targeted "patches" and repair every existing spec with patches only. Use "files" only when the target spec does not exist yet.',
       `Coverage target: at least ${this.coverageTarget}% statements, branches, functions, and lines globally. Prioritize specification behavior over synthetic coverage-only assertions.`,
       'Write a *.spec.ts file next to every controller, service, and any other source file with executable logic — including the root src/app.controller.ts.',
       'A managed test/app.e2e-spec.ts boots AppModule with SQL.js, verifies health, every specified OpenAPI operation and request schema, and parameterless GET routes. Do not replace or patch that managed file.',
@@ -1184,8 +1221,9 @@ describe('Generated application contract (e2e)', () => {
       'Cover both success and failure paths of each branch; if a service method throws when an entity is missing, assert that it throws.',
       '=== WHEN A TEST FAILS, CLASSIFY THE CAUSE BEFORE FIXING ===',
       'Compare the endpoint/function specification and business rules against the ACTUAL method body shown in the codebase context, then decide:',
-      '  (a) BAD TEST — wrong matcher, missing import, or it asserts behavior that NEITHER the code NOR the specification requires. Fix the test.',
-      '  (b) CODE DEFECT — the specification or business rules require behavior the application does not implement. Keep the faithful failing test; never patch application source from this flow.',
+      '  (a) BAD_TEST — wrong matcher, missing mock/import, or it asserts behavior that NEITHER the code NOR the specification requires. Return classification BAD_TEST and repair the spec through patches.',
+      '  (b) CODE_DEFECT — the specification or business rules require behavior the application does not implement. Return classification CODE_DEFECT and repair the implementation through applicationPatches. Keep the faithful test assertion; patch its mocks only if the corrected implementation adds dependencies.',
+      'Never respond to a CODE_DEFECT by duplicating/removing the faithful failing assertion or adding comments. Repair the application behavior that makes the assertion fail.',
       'Do NOT invent behavior nothing requires: if the specification does not call for a throw and the method returns null/undefined when an entity is missing, assert that return value (await expect(...).resolves.toBeNull()) instead of forcing a throw.',
       'Failure "Received promise resolved instead of rejected" (Resolved to value: null/undefined): if the spec requires the throw, keep the faithful failing assertion; otherwise match the documented/actual return value.',
       'Failure "received value must be a promise ... Received has value: undefined": use a synchronous assertion only when that matches the specification and actual method contract.',
@@ -1239,7 +1277,7 @@ describe('Generated application contract (e2e)', () => {
         2,
       ),
       '',
-      'Codebase context (inspect all files; patch only existing *.spec.ts files):',
+      'Codebase context (inspect all files; use patches for existing specs and applicationPatches only for classified CODE_DEFECT repairs):',
       JSON.stringify(contextForPrompt, null, 2),
     ].join('\n');
   }

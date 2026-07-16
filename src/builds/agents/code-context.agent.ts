@@ -12,6 +12,7 @@ import {
 
 const MAX_CONTEXT_FILES = 30;
 const MAX_FILE_CONTENT_CHARS = 8000;
+const MAX_FAILURE_FILE_CONTENT_CHARS = 40000;
 const CONTEXT_MAP_BATCH_SIZE = 50;
 const MAP_SELECTION_SIZE = 12;
 const MAP_CONCURRENCY = 3;
@@ -46,17 +47,20 @@ export class CodeContextAgent {
       extensions: language.sourceExtensions,
     });
     const symbols = await language.searchSymbols(params.rootDir, sourceFiles);
+    const failureFiles = this.extractFailureFilePaths(params.previousFailures);
 
     const relevantFiles = await this.selectRelevantFiles({
       task: params.task,
       entity: params.entity,
       hintedFiles,
       sourceFiles,
+      failureFiles,
       workspaceId: params.workspaceId,
     });
     const fileContents = await this.readFileContents(
       params.rootDir,
       relevantFiles,
+      new Set(failureFiles),
     );
 
     return {
@@ -88,13 +92,19 @@ export class CodeContextAgent {
     entity?: EntitySpec;
     hintedFiles: string[];
     sourceFiles: string[];
+    failureFiles: string[];
     workspaceId?: string;
   }): Promise<string[]> {
     const allFiles = Array.from(
       new Set([...params.hintedFiles, ...params.sourceFiles]),
     ).sort();
-    const required = (params.task?.allowedFiles ?? []).filter((path) =>
-      allFiles.includes(path),
+    const required = Array.from(
+      new Set([
+        ...params.failureFiles.filter((path) => allFiles.includes(path)),
+        ...(params.task?.allowedFiles ?? []).filter((path) =>
+          allFiles.includes(path),
+        ),
+      ]),
     );
 
     // Nothing to choose between yet (early tasks on a small tree).
@@ -112,7 +122,8 @@ export class CodeContextAgent {
         const mapped = await this.mapWithConcurrency(
           batches,
           MAP_CONCURRENCY,
-          (batch, index) => this.selectContextMap({
+          (batch, index) =>
+            this.selectContextMap({
               ...params,
               availableFiles: batch,
               mapIndex: index + 1,
@@ -135,6 +146,7 @@ export class CodeContextAgent {
         user: [
           'Choose up to 30 files that are most relevant to the task below.',
           'Always include files the task is allowed to modify when they already exist.',
+          'Always include files named by the verification failures; they contain the exact repair location.',
           'Include files the new code will import from or register into (entities, modules, shared DTOs).',
           'relevantFiles must be an array of paths copied exactly from the available files list.',
           '',
@@ -259,6 +271,7 @@ export class CodeContextAgent {
   private async readFileContents(
     rootDir: string,
     relevantFiles: string[],
+    failureFiles: Set<string>,
   ): Promise<Array<{ path: string; content: string }>> {
     const contents: Array<{ path: string; content: string }> = [];
 
@@ -269,7 +282,9 @@ export class CodeContextAgent {
         );
         contents.push({
           path,
-          content: this.reduceFileContent(raw),
+          content: failureFiles.has(path)
+            ? raw.slice(0, MAX_FAILURE_FILE_CONTENT_CHARS)
+            : this.reduceFileContent(raw),
         });
       } catch {
         // File may not exist yet (e.g. it is about to be created) — skip.
@@ -287,5 +302,18 @@ export class CodeContextAgent {
       '// ... middle omitted by context reducer ...',
       raw.slice(-half),
     ].join('\n');
+  }
+
+  private extractFailureFilePaths(failures: BuildRunResult[]): string[] {
+    const paths = new Set<string>();
+    for (const failure of failures) {
+      if (failure.success || !failure.errorSummary) continue;
+      // eslint-disable-next-line no-control-regex
+      const clean = failure.errorSummary.replace(/\x1b\[[0-9;]*m/g, '');
+      const regex = /(src\/[\w./-]+\.ts)(?=[:\s);]|$)/g;
+      let match: RegExpExecArray | null;
+      while ((match = regex.exec(clean)) !== null) paths.add(match[1]);
+    }
+    return [...paths];
   }
 }

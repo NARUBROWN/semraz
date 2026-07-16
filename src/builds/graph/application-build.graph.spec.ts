@@ -29,6 +29,7 @@ describe('ApplicationBuildGraph final-build repair helpers', () => {
       {} as never,
       {} as never,
       {} as never,
+      {} as never,
     ) as any;
   };
 
@@ -158,6 +159,43 @@ describe('ApplicationBuildGraph final-build repair helpers', () => {
     });
   });
 
+  describe('nextAfterSelectTask', () => {
+    const graph = makeGraph({});
+
+    it('skips final repair when a planned task already exhausted its retries', () => {
+      expect(
+        graph.nextAfterSelectTask({
+          hasCurrentTask: false,
+          completedTasks: [{ taskId: 'database-migration', success: false }],
+        }),
+      ).toBe('packageArtifact');
+    });
+
+    it('runs the final build after all planned tasks succeed', () => {
+      expect(
+        graph.nextAfterSelectTask({
+          hasCurrentTask: false,
+          completedTasks: [{ taskId: 'database-migration', success: true }],
+        }),
+      ).toBe('runFinalBuild');
+    });
+  });
+
+  it('stops retrying after the same task-generation failure repeats three times', () => {
+    const graph = makeGraph({});
+    expect(
+      graph.nextAfterCodeGeneration({
+        currentTaskGeneratedFiles: [],
+        currentTaskAttempts: 3,
+        currentTaskFailures: Array.from({ length: 3 }, () => ({
+          success: false,
+          commands: [],
+          errorSummary: 'same migration contract failure',
+        })),
+      }),
+    ).toBe('recordFailedTask');
+  });
+
   describe('cleanGeneratedFiles', () => {
     const graph = makeGraph({});
 
@@ -176,6 +214,84 @@ describe('ApplicationBuildGraph final-build repair helpers', () => {
           null,
         ]),
       ).toEqual([{ path: 'src/app.ts', content: 'export {};' }]);
+    });
+  });
+
+  describe('confirmIndependentSpecIssue', () => {
+    const makeSpec = (method: 'PUT' | 'PATCH') => ({
+      projectName: 'inspection-api',
+      summary: '',
+      entities: [
+        {
+          name: 'InspectionRecord',
+          fields: [
+            { name: 'id', type: 'uuid', required: true, primaryKey: true },
+            {
+              name: 'inspectionScheduleId',
+              type: 'uuid',
+              required: true,
+            },
+            { name: 'result', type: 'string', required: true },
+            { name: 'entityId', type: 'uuid', required: true },
+          ],
+          relations: [],
+          endpoints: [],
+          businessRules: [],
+        },
+      ],
+      endpoints: [
+        {
+          method,
+          path: '/inspection-records/:id',
+          requestFields: [
+            { name: 'inspectionScheduleId', type: 'uuid' },
+            { name: 'result', type: 'string' },
+          ],
+        },
+      ],
+      businessRules: [],
+      assumptions: [],
+    });
+
+    const missingFieldIssue = (method: string, field: string) => ({
+      evidence: {
+        kind: 'missing_request_field',
+        route: `${method} /inspection-records/:id`,
+        field,
+      },
+    });
+
+    it('rejects an LLM missing-field claim when that field is present', () => {
+      const graph = makeGraph({});
+
+      expect(
+        graph.confirmIndependentSpecIssue(
+          makeSpec('PUT'),
+          missingFieldIssue('PUT', 'inspectionScheduleId'),
+        ),
+      ).toBe(false);
+    });
+
+    it('confirms a required field actually omitted from a PUT request', () => {
+      const graph = makeGraph({});
+
+      expect(
+        graph.confirmIndependentSpecIssue(
+          makeSpec('PUT'),
+          missingFieldIssue('PUT', 'entityId'),
+        ),
+      ).toBe(true);
+    });
+
+    it('does not require every entity field for a partial PATCH request', () => {
+      const graph = makeGraph({});
+
+      expect(
+        graph.confirmIndependentSpecIssue(
+          makeSpec('PATCH'),
+          missingFieldIssue('PATCH', 'entityId'),
+        ),
+      ).toBe(false);
     });
   });
 
@@ -257,6 +373,36 @@ describe('ApplicationBuildGraph final-build repair helpers', () => {
     expect(runAll.mock.calls[0][1]).toHaveLength(2);
     expect(runAll.mock.calls[1][1]).toHaveLength(1);
     expect(runAll.mock.calls[1][1][0].args).toEqual(['run', 'build']);
+  });
+
+  it('preserves the original runtime failure when a repair generation attempt also fails', async () => {
+    const graph = makeGraph({});
+    graph.targetAdapters = { get: () => ({}) };
+    graph.codeGenerationAgent = {
+      generateTaskFiles: jest
+        .fn()
+        .mockRejectedValue(new Error('repair candidate was incomplete')),
+    };
+    const runtimeFailure = {
+      success: false,
+      commands: [],
+      errorSummary: 'ClimateDataRepository is unavailable in WidgetModule',
+    };
+
+    const result = await graph.codeGeneration({
+      spec: { entities: [] },
+      currentTask: { id: 'feature-widget-crud' },
+      currentContext: {},
+      currentTaskFailures: [runtimeFailure],
+      currentTaskAttempts: 1,
+      request: {},
+    });
+
+    expect(result.currentTaskFailures).toHaveLength(2);
+    expect(result.currentTaskFailures[0]).toBe(runtimeFailure);
+    expect(result.currentTaskFailures[1].errorSummary).toBe(
+      'repair candidate was incomplete',
+    );
   });
 
   it('parses ERD NN fields and relation annotations deterministically', () => {

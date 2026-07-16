@@ -15,6 +15,7 @@ export type LlmCallContext = {
 export class OpenAiJsonClient {
   private readonly client?: OpenAI;
   private readonly model: string;
+  private readonly codeModel: string;
   private readonly timeoutMs: number;
   private readonly maxRetries: number;
 
@@ -40,6 +41,12 @@ export class OpenAiJsonClient {
         })
       : undefined;
     this.model = config.get<string>('OPENAI_MODEL') ?? 'gpt-4o-mini';
+    this.codeModel =
+      config.get<string>('OPENAI_CODE_MODEL') ?? 'gpt-5-codex';
+  }
+
+  codeGenerationModel(): string {
+    return this.codeModel;
   }
 
   async generateJson<T>(params: {

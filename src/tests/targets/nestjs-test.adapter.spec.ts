@@ -810,5 +810,40 @@ describe('NestJsTestAdapter', () => {
       expect(prompt).toContain('did NOT apply');
       expect(prompt).toContain('src/a.spec.ts');
     });
+
+    it('shows the exact current target and requires a unique patch find', () => {
+      const prompt = adapter.testGenerationPrompt({
+        ...baseParams,
+        targetFile: 'src/a/a.service.spec.ts',
+        context: {
+          ...baseParams.context,
+          relevantFiles: [
+            {
+              path: 'src/a/a.service.spec.ts',
+              content: "it('current target case', () => {});",
+            },
+            {
+              path: 'src/a/a.service.ts',
+              content: 'export class AService {}',
+            },
+          ],
+        },
+        patchFailures: [
+          {
+            path: 'src/a/a.service.spec.ts',
+            reason: 'find text is ambiguous (2 matches)',
+          },
+        ],
+      });
+
+      expect(prompt.indexOf('CURRENT SPEC TARGET')).toBeLessThan(
+        prompt.indexOf('FIX THIS TEST FAILURE FIRST') < 0
+          ? prompt.length
+          : prompt.indexOf('FIX THIS TEST FAILURE FIRST'),
+      );
+      expect(prompt).toContain("it('current target case', () => {});");
+      expect(prompt).toContain('copy a longer exact substring');
+      expect(prompt).toContain('full-file replacement is forbidden');
+    });
   });
 });

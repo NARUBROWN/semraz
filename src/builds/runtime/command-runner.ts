@@ -94,6 +94,6 @@ export class CommandRunner {
   }
 
   private formatCommand(spec: CommandSpec) {
-    return [spec.command, ...spec.args].join(' ');
+    return spec.displayCommand ?? [spec.command, ...spec.args].join(' ');
   }
 }

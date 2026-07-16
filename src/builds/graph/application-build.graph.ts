@@ -17,6 +17,8 @@ import { CodeGenerationAgent } from '../agents/code-generation.agent';
 import { SyntaxCheckAgent } from '../agents/syntax-check.agent';
 import { E2ECheckAgent } from '../agents/e2e-check.agent';
 import { CodePatchTool } from '../../tools/code-patch.tool';
+import { DesignConsistencyService } from '../../design-consistency/design-consistency.service';
+import { buildRepairDiagnostics } from '../repair/repair-diagnostics';
 import {
   AppSpec,
   ArtifactSummary,
@@ -168,6 +170,7 @@ export class ApplicationBuildGraph {
     private readonly syntaxCheckAgent: SyntaxCheckAgent,
     private readonly e2eCheckAgent: E2ECheckAgent,
     private readonly codePatchTool: CodePatchTool,
+    private readonly designConsistency: DesignConsistencyService,
   ) {}
 
   async run(
@@ -400,6 +403,7 @@ export class ApplicationBuildGraph {
         {
           taskPlanner: 'taskPlanner',
           runFinalBuild: 'runFinalBuild',
+          packageArtifact: 'packageArtifact',
         },
       )
       .addEdge('taskPlanner', 'codeContext')
@@ -653,6 +657,7 @@ export class ApplicationBuildGraph {
   ): Promise<Partial<BuildStateType>> {
     // The LLM normalizes the spec from the markdown docs; the deterministic
     // markdown parser is only a fallback when the LLM output is unusable.
+    let spec: AppSpec | undefined;
     try {
       const rawSpec = await this.normalizeDocsMapReduce(state);
 
@@ -697,34 +702,219 @@ export class ApplicationBuildGraph {
           entities,
         );
 
-        return {
-          spec: {
-            projectName: rawSpec.projectName ?? state.request.outputName,
-            summary: rawSpec.summary ?? '',
-            entities: entities.map((entity) => ({
-              ...entity,
-              endpoints:
-                parsedEndpoints.length > 0
-                  ? (endpointsByEntity.get(entity.name) ?? [])
-                  : entity.endpoints,
-            })),
-            endpoints,
-            auth: rawSpec.auth ?? {},
-            database: rawSpec.database ?? {},
-            businessRules: Array.isArray(rawSpec.businessRules)
-              ? rawSpec.businessRules
-              : [],
-            assumptions: Array.isArray(rawSpec.assumptions)
-              ? rawSpec.assumptions
-              : [],
-          },
+        spec = {
+          projectName: rawSpec.projectName ?? state.request.outputName,
+          summary: rawSpec.summary ?? '',
+          entities: entities.map((entity) => ({
+            ...entity,
+            endpoints:
+              parsedEndpoints.length > 0
+                ? (endpointsByEntity.get(entity.name) ?? [])
+                : entity.endpoints,
+          })),
+          endpoints,
+          auth: rawSpec.auth ?? {},
+          database: rawSpec.database ?? {},
+          businessRules: Array.isArray(rawSpec.businessRules)
+            ? rawSpec.businessRules
+            : [],
+          assumptions: Array.isArray(rawSpec.assumptions)
+            ? rawSpec.assumptions
+            : [],
         };
       }
     } catch {
       // fall through to the deterministic parser
     }
 
-    return { spec: this.parseMarkdownSpec(state) };
+    spec ??= this.parseMarkdownSpec(state);
+    await this.validateSpecBeforeGeneration(spec, state);
+    return { spec };
+  }
+
+  private async validateSpecBeforeGeneration(
+    spec: AppSpec,
+    state: BuildStateType,
+  ) {
+    const deterministic = this.designConsistency.validateNormalizedSpec(spec);
+    if (!deterministic.valid) {
+      const summary = deterministic.issues
+        .slice(0, 3)
+        .map((issue) => issue.message.trim())
+        .filter(Boolean)
+        .join(' / ');
+      throw new BadRequestException({
+        message: `코드 생성 전 마크다운 설계 일관성 검증을 통과하지 못했습니다.${summary ? ` ${summary}` : ''}`,
+        stage: 'pre-codegen-design-validation',
+        issues: deterministic.issues,
+        checked: deterministic.checked,
+      });
+    }
+
+    try {
+      const review = await this.llm.generateJson<{
+        valid: boolean;
+        issues?: Array<{
+          code?: string;
+          location?: string;
+          message?: string;
+          suggestion?: string;
+          evidence?: {
+            kind?: string;
+            route?: string;
+            field?: string;
+            expectedType?: string;
+            actualType?: string;
+          };
+        }>;
+      }>({
+        system:
+          'You are an independent API/ERD contract reviewer. Return JSON only with shape {"valid":boolean,"issues":[{"code":string,"location":string,"message":string,"suggestion":string,"evidence":{"kind":"missing_request_field"|"request_type_mismatch"|"server_managed_request_field","route":string,"field":string,"expectedType"?:string,"actualType"?:string}}]}. Report only concrete, blocking contradictions supported by the supplied Markdown and normalized spec. Write every issue message and suggestion in Korean.',
+        user: [
+          'Cross-check the normalized application specification against all source Markdown before any code is generated.',
+          'Check duplicate fields/routes, request-vs-ERD type mismatches, required ERD fields missing from POST create or PUT full-update requests, server-managed fields accepted from clients, and foreign-key/existence requirements without a corresponding entity/relation.',
+          'A path parameter such as :id or {id} is supplied by the route and must not be reported as missing from Request Fields. PATCH is partial and does not require every ERD field.',
+          'Before reporting a missing field, verify that the exact field name is absent from the exact endpoint requestFields array. Do not report a field that is already present.',
+          'Do not invent requirements. Return valid=true only if there is no blocking contradiction. Every issue must include machine-checkable evidence with the exact method/path, field, and mismatch kind.',
+          '',
+          'NORMALIZED SPEC:',
+          JSON.stringify(spec, null, 2),
+          '',
+          'SOURCE MARKDOWN:',
+          this.formatDocs(state.docs),
+        ].join('\n'),
+        temperature: 0,
+        context: {
+          workspaceId: state.request.workspaceId,
+          caller: 'build-graph:pre-codegen-design-review',
+        },
+      });
+      const issues = Array.isArray(review?.issues)
+        ? review.issues.filter(
+            (issue) =>
+              issue &&
+              typeof issue.message === 'string' &&
+              issue.message.trim().length > 0 &&
+              typeof issue.location === 'string' &&
+              issue.location.trim().length > 0,
+          )
+        : [];
+      const confirmedIssues = issues.filter((issue) =>
+        this.confirmIndependentSpecIssue(spec, issue),
+      );
+      if (review?.valid === false && confirmedIssues.length > 0) {
+        const summary = confirmedIssues
+          .slice(0, 3)
+          .map((issue) => issue.message?.trim())
+          .filter(Boolean)
+          .join(' / ');
+        throw new BadRequestException({
+          message: `코드 생성 전 독립 설계 교차 검증에서 해결이 필요한 모순을 발견했습니다.${summary ? ` ${summary}` : ''}`,
+          stage: 'pre-codegen-independent-review',
+          issues: confirmedIssues,
+        });
+      }
+      if (review?.valid === false && issues.length > confirmedIssues.length) {
+        console.warn(
+          '[ApplicationBuildGraph] ignored unverified independent review issues:',
+          issues
+            .filter((issue) => !confirmedIssues.includes(issue))
+            .map((issue) => issue.message)
+            .join(' / '),
+        );
+      }
+    } catch (error) {
+      if (error instanceof BadRequestException) throw error;
+      // The deterministic gate is authoritative and remains available when a
+      // second LLM review is temporarily unavailable.
+      console.error(
+        '[ApplicationBuildGraph] independent pre-codegen review unavailable:',
+        (error as Error)?.message ?? error,
+      );
+    }
+  }
+
+  private confirmIndependentSpecIssue(
+    spec: AppSpec,
+    issue: {
+      evidence?: {
+        kind?: string;
+        route?: string;
+        field?: string;
+        expectedType?: string;
+        actualType?: string;
+      };
+    },
+  ) {
+    const evidence = issue.evidence;
+    const route = evidence?.route?.trim();
+    const fieldName = evidence?.field?.trim();
+    if (!evidence?.kind || !route || !fieldName) return false;
+    const routeMatch = route.match(/^(GET|POST|PUT|PATCH|DELETE)\s+(.+)$/i);
+    if (!routeMatch) return false;
+    const method = routeMatch[1].toUpperCase();
+    const endpointPath = this.normalizeEndpointPathForReview(routeMatch[2]);
+    const endpoint = [
+      ...spec.endpoints,
+      ...spec.entities.flatMap((entity) => entity.endpoints),
+    ].find(
+      (candidate) =>
+        String(candidate.method ?? '').toUpperCase() === method &&
+        this.normalizeEndpointPathForReview(String(candidate.path ?? '')) ===
+          endpointPath,
+    );
+    if (!endpoint) return false;
+    const entity = spec.entities.find((candidate) => {
+      if (candidate.endpoints.includes(endpoint)) return true;
+      const segment = endpointPath.split('/').filter(Boolean)[0] ?? '';
+      const name = this.normalizeName(candidate.name);
+      const normalizedSegment = this.normalizeName(segment);
+      return (
+        normalizedSegment === name ||
+        normalizedSegment === `${name}s` ||
+        normalizedSegment === `${name}es`
+      );
+    });
+    const requestFields = Array.isArray(endpoint.requestFields)
+      ? endpoint.requestFields
+      : [];
+    const requestField = requestFields.find(
+      (field) => String(field.name ?? '') === fieldName,
+    );
+    const entityField = entity?.fields.find(
+      (field) => String(field.name ?? '') === fieldName,
+    );
+
+    if (evidence.kind === 'server_managed_request_field') {
+      return (
+        Boolean(requestField) &&
+        ['id', 'createdAt', 'updatedAt'].includes(fieldName)
+      );
+    }
+    if (evidence.kind === 'missing_request_field') {
+      const isCompleteWrite = method === 'POST' || method === 'PUT';
+      return (
+        isCompleteWrite &&
+        !requestField &&
+        entityField?.required === true &&
+        !['id', 'createdAt', 'updatedAt'].includes(fieldName)
+      );
+    }
+    if (evidence.kind === 'request_type_mismatch') {
+      const entityType = String(entityField?.type ?? '').toLowerCase();
+      const requestType = String(requestField?.type ?? '').toLowerCase();
+      return Boolean(entityType && requestType && entityType !== requestType);
+    }
+    return false;
+  }
+
+  private normalizeEndpointPathForReview(value: string) {
+    const normalized = value
+      .trim()
+      .replace(/\{([^}]+)\}/g, ':$1')
+      .replace(/\/{2,}/g, '/')
+      .replace(/\/+$/, '');
+    return normalized.startsWith('/') ? normalized || '/' : `/${normalized}`;
   }
 
   private async normalizeDocsMapReduce(
@@ -998,18 +1188,30 @@ export class ApplicationBuildGraph {
     const nameIndex = columnIndex(['name', 'column', 'field'], 0);
     const typeIndex = columnIndex(['type', 'data type'], 1);
     const requiredIndex = columnIndex(['required', 'nn', 'not null'], 2);
-    const notesIndex = columnIndex(['notes', 'description', 'references'], 3);
+    const primaryKeyIndex = columnIndex(['pk', 'primary key'], -1);
+    const foreignKeyIndex = columnIndex(['fk', 'foreign key'], -1);
+    const referencesIndex = columnIndex(['references', 'reference'], -1);
+    const notesIndex = columnIndex(['notes', 'description'], 3);
 
     return bodyRows
       .map((cells) => {
         const name = cells[nameIndex];
         const type = cells[typeIndex];
         const required = cells[requiredIndex];
+        const primaryKey =
+          primaryKeyIndex >= 0 ? cells[primaryKeyIndex] : undefined;
+        const foreignKey =
+          foreignKeyIndex >= 0 ? cells[foreignKeyIndex] : undefined;
+        const references =
+          referencesIndex >= 0 ? cells[referencesIndex] : undefined;
         const notes = cells[notesIndex];
         return {
           name,
           type,
           required: /^(yes|true|y)$/i.test(required ?? ''),
+          primaryKey: /^(yes|true|y|pk)$/i.test(primaryKey ?? ''),
+          foreignKey: /^(yes|true|y|fk)$/i.test(foreignKey ?? ''),
+          references,
           notes,
         };
       })
@@ -1104,6 +1306,7 @@ export class ApplicationBuildGraph {
           fields.push({
             name: field[1].trim(),
             type: field[2].trim(),
+            required: detailSection === 'requestFields',
           });
         }
       }
@@ -1443,9 +1646,9 @@ export class ApplicationBuildGraph {
       );
     }
 
-    return {
-      currentTaskFailures: state.currentTaskFailures,
-    };
+    // Failure context already remains in graph state for codeContext. Returning
+    // it again would make this preparation node look failed in the progress UI.
+    return {};
   }
 
   private async codeContext(
@@ -1524,7 +1727,7 @@ export class ApplicationBuildGraph {
       };
       return {
         currentTaskGeneratedFiles: [],
-        currentTaskFailures: [failure],
+        currentTaskFailures: [...state.currentTaskFailures, failure].slice(-6),
         currentTaskSyntaxResult: failure,
         currentTaskAttempts: state.currentTaskAttempts + 1,
       };
@@ -1575,6 +1778,8 @@ export class ApplicationBuildGraph {
     const currentTaskE2EResult = await this.e2eCheckAgent.check(
       state.outputDir,
       adapter,
+      state.spec,
+      state.currentTask,
     );
     return {
       currentTaskE2EResult,
@@ -1681,7 +1886,7 @@ export class ApplicationBuildGraph {
     state: BuildStateType,
   ): Promise<Partial<BuildStateType>> {
     const adapter = this.targetAdapters.get(state.request.target);
-    const commands = adapter.e2eCheckCommands();
+    const commands = adapter.e2eCheckCommands(state.spec);
     const results = await this.commandRunner.runAll(state.outputDir, commands);
     const success = results.every((result) => result.success);
     return {
@@ -1728,23 +1933,47 @@ export class ApplicationBuildGraph {
     }
 
     const currentFiles = await this.readGeneratedFiles(state.outputDir);
+    const adapter = this.targetAdapters.get(state.request.target);
+    const focusFiles = await this.collectFinalRepairFiles(
+      state.outputDir,
+      state.buildResult.errorSummary ?? '',
+      adapter,
+      state.request.workspaceId,
+    );
+    const diagnostics = buildRepairDiagnostics(
+      state.buildResult.errorSummary ?? '',
+      focusFiles,
+    );
     const repaired = await this.llm.generateJson<{ files: GeneratedFile[] }>({
+      model: this.llm.codeGenerationModel?.(),
       system:
         'You fix build failures by returning complete replacement file contents. Return JSON only.',
       user: [
         `Target framework: ${state.request.target}`,
         `Repair attempt: ${state.repairAttempts + 1}`,
+        'The structured diagnostics are authoritative. Begin at each exact file, line, symbol, and excerpt and satisfy every expectedFix.',
+        'Do not inspect unrelated files for an alternative cause unless an expectedFix requires one of the listed local dependencies.',
         'Return only files that must be changed, but each returned file must contain the full final content.',
         'Do not remove required features from the spec to make the build pass.',
+        '',
+        'STRUCTURED REPAIR DIAGNOSTICS:',
+        JSON.stringify(diagnostics, null, 2),
         '',
         'Normalized spec:',
         JSON.stringify(state.spec, null, 2),
         '',
-        'Build result:',
+        'RAW BUILD RESULT (evidence appendix only):',
         JSON.stringify(state.buildResult, null, 2),
         '',
-        'Current files:',
-        JSON.stringify(currentFiles, null, 2),
+        'FOCUSED REPAIR FILES (reported files plus local dependencies):',
+        JSON.stringify(focusFiles, null, 2),
+        '',
+        'Other current file paths (index only):',
+        JSON.stringify(
+          currentFiles.map((file) => file.path),
+          null,
+          2,
+        ),
       ].join('\n'),
       temperature: 0.05,
       context: {
@@ -1753,7 +1982,6 @@ export class ApplicationBuildGraph {
       },
     });
 
-    const adapter = this.targetAdapters.get(state.request.target);
     const plannedPaths = new Set(state.plan.files.map((file) => file.path));
     const files = adapter
       .normalizeGeneratedFiles(
@@ -1794,21 +2022,31 @@ export class ApplicationBuildGraph {
       adapter,
       state.request.workspaceId,
     );
+    const diagnostics = buildRepairDiagnostics(
+      state.buildResult.errorSummary ?? '',
+      focusFiles,
+    );
 
     const repaired = await this.llm.generateJson<{ files: GeneratedFile[] }>({
+      model: this.llm.codeGenerationModel?.(),
       system:
         'You fix TypeScript/NestJS compile errors by returning complete replacement file contents. Return JSON only with shape {"files":[{"path","content"}]}.',
       user: [
         `Target framework: ${state.request.target}`,
         `Final-build repair attempt: ${attempt}`,
-        'The generated app failed a build, runtime verification, or specification-contract check. Diagnose the errors below and return the FULL final content of every file you change.',
+        'The generated app failed a build, runtime verification, or specification-contract check. The structured diagnostics below identify the concrete repair sites.',
+        'Process diagnostics in order. Start from each exact file/line/excerpt and satisfy its expectedFix. Do not perform a broad code search first.',
+        'Return the FULL final content of every file you change. A returned file must correspond to a diagnostic or be a listed dependency required to implement expectedFix.',
         'Return ONLY files that must change; never restate an unchanged file.',
         'A frequent cause is a relation whose inverse side is missing: `@ManyToOne(() => Other, (o) => o.things)` requires `things: Thing[]` with `@OneToMany(() => Thing, (t) => t.other)` on the Other entity. Add the missing inverse property (with decorator + import) to the target entity — do NOT delete the relation.',
         'Never remove entities, fields, endpoints, or features from the spec to make the build pass.',
         'Never add a controller route absent from the normalized endpoint skeleton.',
         'Preserve every // <semraz:user-code ...> block byte-for-byte.',
         '',
-        'Build errors:',
+        'STRUCTURED REPAIR DIAGNOSTICS (authoritative):',
+        JSON.stringify(diagnostics, null, 2),
+        '',
+        'RAW BUILD ERRORS (evidence appendix only):',
         state.buildResult.errorSummary ?? 'Unknown build error',
         '',
         'Authoritative global endpoint skeleton (no other public routes are allowed):',
@@ -2040,8 +2278,11 @@ export class ApplicationBuildGraph {
 
   private nextAfterSelectTask(
     state: BuildStateType,
-  ): 'taskPlanner' | 'runFinalBuild' {
-    return state.hasCurrentTask ? 'taskPlanner' : 'runFinalBuild';
+  ): 'taskPlanner' | 'runFinalBuild' | 'packageArtifact' {
+    if (state.hasCurrentTask) return 'taskPlanner';
+    return state.completedTasks.some((task) => !task.success)
+      ? 'packageArtifact'
+      : 'runFinalBuild';
   }
 
   private nextAfterFinalBuild(
@@ -2077,9 +2318,19 @@ export class ApplicationBuildGraph {
     state: BuildStateType,
   ): 'applyPatch' | 'taskPlanner' | 'recordFailedTask' {
     if (state.currentTaskGeneratedFiles.length > 0) return 'applyPatch';
-    return state.currentTaskAttempts >= TASK_REPAIR_ATTEMPT_LIMIT
+    return state.currentTaskAttempts >= TASK_REPAIR_ATTEMPT_LIMIT ||
+      this.hasRepeatedTaskFailure(state, 3)
       ? 'recordFailedTask'
       : 'taskPlanner';
+  }
+
+  private hasRepeatedTaskFailure(state: BuildStateType, threshold: number) {
+    const summaries = state.currentTaskFailures
+      .map((failure) => failure.errorSummary?.trim())
+      .filter((summary): summary is string => Boolean(summary));
+    if (summaries.length < threshold) return false;
+    const recent = summaries.slice(-threshold);
+    return recent.every((summary) => summary === recent[0]);
   }
 
   private nextAfterTaskSyntax(

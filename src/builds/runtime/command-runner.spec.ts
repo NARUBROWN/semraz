@@ -45,7 +45,9 @@ describe('CommandRunner', () => {
 
     expect(results).toHaveLength(1);
     expect(logError).toHaveBeenCalledWith(
-      expect.stringContaining('Generated application command failed: npm run build'),
+      expect.stringContaining(
+        'Generated application command failed: npm run build',
+      ),
     );
     expect(logError).toHaveBeenCalledWith(
       expect.stringContaining('src/app.ts:1:1 - error TS1005'),
@@ -53,5 +55,24 @@ describe('CommandRunner', () => {
     expect(logError).toHaveBeenCalledWith(
       expect.stringContaining('Working directory: /tmp/generated-app'),
     );
+  });
+
+  it('uses a compact display command without hiding captured repair diagnostics', async () => {
+    const runner = new CommandRunner();
+    const [result] = await runner.runAll(process.cwd(), [
+      {
+        command: process.execPath,
+        args: [
+          '-e',
+          "process.stderr.write('Nest cannot resolve MissingRepository'); process.exit(1)",
+        ],
+        description: 'Exercise runtime failure reporting',
+        displayCommand: 'node -e <runtime verification script>',
+      },
+    ]);
+
+    expect(result.success).toBe(false);
+    expect(result.command).toBe('node -e <runtime verification script>');
+    expect(result.stderr).toContain('MissingRepository');
   });
 });

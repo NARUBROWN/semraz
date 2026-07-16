@@ -11,22 +11,25 @@ describe('TestCodebaseSearchAgent', () => {
         '  create() {}',
         '}',
       ].join('\n'),
-      'src/draft/draft.controller.spec.ts': 'describe(\'DraftController\', () => {});',
+      'src/draft/draft.controller.spec.ts':
+        "describe('DraftController', () => {});",
       'package.json': '{}',
     };
     const fileSearch = {
-      search: jest.fn(async (_root: string, options: { extensions: string[] }) => {
-        if (options.extensions.includes('.ts')) {
-          return [
-            'src/draft/draft.controller.ts',
-            'src/draft/draft.controller.spec.ts',
-          ];
-        }
-        if (options.extensions.includes('.json')) {
-          return ['package.json'];
-        }
-        return [];
-      }),
+      search: jest.fn(
+        async (_root: string, options: { extensions: string[] }) => {
+          if (options.extensions.includes('.ts')) {
+            return [
+              'src/draft/draft.controller.ts',
+              'src/draft/draft.controller.spec.ts',
+            ];
+          }
+          if (options.extensions.includes('.json')) {
+            return ['package.json'];
+          }
+          return [];
+        },
+      ),
     };
     const workspace = {
       resolveInside: (_root: string, filePath: string) => filePath,
@@ -68,7 +71,9 @@ describe('TestCodebaseSearchAgent', () => {
       expect.objectContaining({
         className: 'DraftController',
         filePath: 'src/draft/draft.controller.ts',
-        methods: [expect.objectContaining({ name: 'create', httpMethod: 'POST' })],
+        methods: [
+          expect.objectContaining({ name: 'create', httpMethod: 'POST' }),
+        ],
       }),
     ]);
     expect(context.failureDiagnoses).toEqual([
@@ -81,5 +86,65 @@ describe('TestCodebaseSearchAgent', () => {
     expect(context.failedSpecPaths).toEqual([
       'src/draft/draft.controller.spec.ts',
     ]);
+  });
+
+  it('does not try to read a failed spec that was never created', async () => {
+    const files: Record<string, string> = {
+      'src/draft/draft.service.ts': 'export class DraftService {}',
+      'package.json': '{}',
+    };
+    const fileSearch = {
+      search: jest.fn(
+        async (_root: string, options: { extensions: string[] }) => {
+          if (options.extensions.includes('.ts')) {
+            return ['src/draft/draft.service.ts'];
+          }
+          if (options.extensions.includes('.json')) {
+            return ['package.json'];
+          }
+          return [];
+        },
+      ),
+    };
+    const workspace = {
+      resolveInside: (_root: string, filePath: string) => filePath,
+      readTextFile: jest.fn(async (filePath: string) => {
+        if (!(filePath in files)) throw new Error(`ENOENT: ${filePath}`);
+        return files[filePath];
+      }),
+    };
+    const language = {
+      sourceExtensions: ['.ts'],
+      configExtensions: ['.json'],
+      searchSymbols: jest.fn().mockResolvedValue([]),
+    };
+    const agent = new TestCodebaseSearchAgent(
+      fileSearch as never,
+      workspace as never,
+      language as never,
+    );
+
+    const context = await agent.search({
+      appDir: '/app',
+      spec: {
+        projectName: 'Test',
+        summary: '',
+        endpoints: [],
+        businessRules: [],
+        sourceDocs: [],
+      },
+      previousFailures: [
+        {
+          success: false,
+          commands: [],
+          errorSummary: 'FAIL src/draft/draft.service.spec.ts\\nENOENT',
+        },
+      ],
+    });
+
+    expect(context.failedSpecPaths).toEqual([]);
+    expect(workspace.readTextFile).not.toHaveBeenCalledWith(
+      'src/draft/draft.service.spec.ts',
+    );
   });
 });
