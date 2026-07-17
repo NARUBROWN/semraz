@@ -12,7 +12,9 @@ import { E2ECheckAgent } from './agents/e2e-check.agent';
 import { SyntaxCheckAgent } from './agents/syntax-check.agent';
 import { ToolsModule } from '../tools/tools.module';
 import { TypeScriptLanguageAdapter } from './languages/typescript-language.adapter';
+import { GoLanguageAdapter } from './languages/go-language.adapter';
 import { NestJsTargetAdapter } from './targets/nestjs.adapter';
+import { SpineTargetAdapter } from './targets/spine.adapter';
 import { TargetAdapterRegistry } from './targets/target-adapter.registry';
 
 @Module({
@@ -28,7 +30,9 @@ import { TargetAdapterRegistry } from './targets/target-adapter.registry';
     E2ECheckAgent,
     SyntaxCheckAgent,
     TypeScriptLanguageAdapter,
+    GoLanguageAdapter,
     NestJsTargetAdapter,
+    SpineTargetAdapter,
     TargetAdapterRegistry,
   ],
   exports: [BuildService, OpenAiJsonClient],

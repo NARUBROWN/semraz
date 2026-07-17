@@ -100,7 +100,7 @@ type WorkspaceSnapshot = {
 type DraftProject = {
   name: string;
   description: string;
-  framework: 'NestJS';
+  framework: 'NestJS' | 'Spine';
   database: 'PostgreSQL' | 'MySQL';
   planning: {
     purpose: string;
@@ -3856,16 +3856,15 @@ function ProjectSetup({ draftProject, onChangeDraft }: ProjectSetupProps) {
       <section className="flow-panel">
         <h3>{t('project.framework')}</h3>
         <div className="framework-grid">
-          <button className="framework-card selected" type="button">
+          <button className={`framework-card${draftProject.framework === 'NestJS' ? ' selected' : ''}`} type="button" onClick={() => onChangeDraft({ ...draftProject, framework: 'NestJS' })}>
             <span>TypeScript</span>
             <strong>NestJS</strong>
             <p>{t('project.nestDescription')}</p>
           </button>
-          <button className="framework-card disabled" type="button" disabled>
+          <button className={`framework-card${draftProject.framework === 'Spine' ? ' selected' : ''}`} type="button" onClick={() => onChangeDraft({ ...draftProject, framework: 'Spine' })}>
             <span>Go</span>
             <strong>Spine</strong>
             <p>{t('project.goDescription')}</p>
-            <em>{t('project.comingSoon')}</em>
           </button>
           <button className="framework-card disabled" type="button" disabled>
             <span>Python</span>

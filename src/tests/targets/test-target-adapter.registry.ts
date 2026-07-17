@@ -1,15 +1,17 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { TargetFramework } from '../../builds/types/build.types';
 import { NestJsTestAdapter } from './nestjs-test.adapter';
+import { SpineTestAdapter } from './spine-test.adapter';
 import { TestTargetAdapter } from './test-target-adapter';
 
 @Injectable()
 export class TestTargetAdapterRegistry {
   private readonly adapters: Partial<Record<TargetFramework, TestTargetAdapter>>;
 
-  constructor(nestJsTestAdapter: NestJsTestAdapter) {
+  constructor(nestJsTestAdapter: NestJsTestAdapter, spineTestAdapter: SpineTestAdapter) {
     this.adapters = {
       [TargetFramework.NestJS]: nestJsTestAdapter,
+      [TargetFramework.SpineGo]: spineTestAdapter,
     };
   }
 
